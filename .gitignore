@@ -1,0 +1,83 @@
+# Environment variables - NEVER COMMIT THESE
+.env
+.env.local
+.env.*.local
+.env.production.local
+
+# Node modules - install with npm install
+node_modules/
+package-lock.json
+yarn.lock
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+.code-workspace
+.vs/
+
+# OS files
+Thumbs.db
+.DS_Store
+.AppleDouble
+.LSOverride
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+pnpm-debug.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+*.tmp
+
+# Build output
+dist/
+build/
+out/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.rdb
+
+# Uploads folder
+uploads/
+public/uploads/
+
+# Misc
+.cache/
+.venv/
+env/
+venv/
+ENV/
+.env.vault
+.vercel
