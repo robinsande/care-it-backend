@@ -811,10 +811,22 @@ app.put("/api/assets/:id/return", auth, async (req, res) => {
 ========================= */
 app.get("/api/dashboard/status", auth, async (req, res) => {
   try {
-    const stats = await Asset.aggregate([
+    const byStatus = await Asset.aggregate([
       { $group: { _id: "$status", count: { $sum: 1 } } }
     ]);
-    res.json(stats);
+    const map = Object.fromEntries(byStatus.map(s => [s._id, s.count]));
+    const damagedFaulty = await Asset.countDocuments({
+      condition: { $in: ["Faulty", "Damaged"] },
+      status: { $ne: "Under Repair" }
+    });
+    res.json([
+      { _id: "Available (Ready for Issuing)", status: "Available", count: map["Available"] || 0 },
+      { _id: "In Storage", status: "In Storage", count: map["In Storage"] || 0 },
+      { _id: "Assigned (In Use)", status: "Assigned", count: map["Assigned"] || 0 },
+      { _id: "Under Repair", status: "Under Repair", count: map["Under Repair"] || 0 },
+      { _id: "Faulty / Damaged (Condition)", status: "Faulty", count: damagedFaulty || 0 },
+      { _id: "Lost", status: "Lost", count: map["Lost"] || 0 }
+    ]);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
