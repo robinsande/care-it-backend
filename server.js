@@ -485,7 +485,8 @@ const assetSchema = new mongoose.Schema({
       "Security",
       "PQLA / MEAL– Program Quality Learning & Accountability",
       "Programs & Fund raising",
-      "Risk and Compliance"
+      "Risk and Compliance",
+      "ESA"
     ],
   },
   location: {
