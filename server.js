@@ -918,6 +918,91 @@ app.get("/api/dashboard/category/lost", auth, async (req, res) => {
   }
 });
 
+/* ---- Availability (status=Available OR status=In Storage) breakdown per dimension ---- */
+function availableMatch() {
+  return { $match: { status: { $in: ["Available", "In Storage"] } } };
+}
+
+app.get("/api/dashboard/available/category", auth, async (req, res) => {
+  try {
+    const stats = await Asset.aggregate([
+      availableMatch(),
+      { $group: { _id: "$category", count: { $sum: 1 } } }
+    ]);
+    res.json(Object.fromEntries(stats.map(s => [s._id, s.count])));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/dashboard/available/department", auth, async (req, res) => {
+  try {
+    const stats = await Asset.aggregate([
+      availableMatch(),
+      { $group: { _id: "$department", count: { $sum: 1 } } }
+    ]);
+    res.json(Object.fromEntries(stats.map(s => [s._id, s.count])));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/dashboard/available/location", auth, async (req, res) => {
+  try {
+    const stats = await Asset.aggregate([
+      availableMatch(),
+      { $group: { _id: "$location", count: { $sum: 1 } } }
+    ]);
+    res.json(Object.fromEntries(stats.map(s => [s._id, s.count])));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/dashboard/available/status", auth, async (req, res) => {
+  try {
+    const stats = await Asset.aggregate([
+      availableMatch(),
+      { $group: { _id: "$status", count: { $sum: 1 } } }
+    ]);
+    res.json(Object.fromEntries(stats.map(s => [s._id, s.count])));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/dashboard/available/condition", auth, async (req, res) => {
+  try {
+    const stats = await Asset.aggregate([
+      availableMatch(),
+      { $group: { _id: "$condition", count: { $sum: 1 } } }
+    ]);
+    res.json(Object.fromEntries(stats.map(s => [s._id, s.count])));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/dashboard/available/total", auth, async (req, res) => {
+  try {
+    const total = await Asset.countDocuments();
+    const available = await Asset.countDocuments({ status: "Available" });
+    const storage = await Asset.countDocuments({ status: "In Storage" });
+    const issuedReady = available + storage;
+    res.json({
+      total,
+      available,
+      inStorage: storage,
+      issuable: issuedReady,
+      assigned: await Asset.countDocuments({ status: "Assigned" }),
+      underRepair: await Asset.countDocuments({ status: "Under Repair" }),
+      lost: await Asset.countDocuments({ status: "Lost" })
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 /* =========================
    EXPORT EXCEL
 ========================= */
