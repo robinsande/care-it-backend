@@ -837,6 +837,57 @@ app.get("/api/dashboard/department", auth, async (req, res) => {
   }
 });
 
+app.get("/api/dashboard/category", auth, async (req, res) => {
+  try {
+    const stats = await Asset.aggregate([
+      { $group: { _id: "$category", count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/dashboard/category/faulty", auth, async (req, res) => {
+  try {
+    const stats = await Asset.aggregate([
+      { $match: { condition: { $in: ["Faulty", "Damaged"] } } },
+      { $group: { _id: "$category", count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/dashboard/category/new", auth, async (req, res) => {
+  try {
+    const stats = await Asset.aggregate([
+      { $match: { condition: "New" } },
+      { $group: { _id: "$category", count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/dashboard/category/lost", auth, async (req, res) => {
+  try {
+    const stats = await Asset.aggregate([
+      { $match: { status: "Lost" } },
+      { $group: { _id: "$category", count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 /* =========================
    EXPORT EXCEL
 ========================= */
