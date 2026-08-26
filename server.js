@@ -652,7 +652,8 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
     const colStatus = getCol(['Status']) || 8;
     const colDepartment = getCol(['Department', 'Dept']) || 9;
     const colLocation = getCol(['Location']) || 10;
-    const colCondition = getCol(['Condition']) || 11;
+    const colAssignedTo = getCol(['Assigned To', 'AssignedTo', 'Assignee', 'Staff Name', 'Owner']) || 11;
+    const colCondition = getCol(['Condition']) || 12;
 
     worksheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return;
@@ -686,6 +687,7 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
           status: row.getCell(colStatus).value?.toString().trim() || "Available",
           department: row.getCell(colDepartment).value?.toString().trim(),
           location: row.getCell(colLocation).value?.toString().trim(),
+          assignedTo: row.getCell(colAssignedTo).value?.toString().trim(),
           condition: row.getCell(colCondition).value?.toString().trim() || "Good",
         };
 
@@ -924,6 +926,7 @@ app.get("/api/export/excel", auth, async (req, res) => {
       { header: "Status", key: "status", width: 15 },
       { header: "Department", key: "department", width: 25 },
       { header: "Location", key: "location", width: 25 },
+      { header: "Assigned To", key: "assignedTo", width: 28 },
       { header: "Condition", key: "condition", width: 15 },
     ];
 
@@ -939,6 +942,7 @@ app.get("/api/export/excel", auth, async (req, res) => {
         status: a.status,
         department: a.department,
         location: a.location,
+        assignedTo: a.assignedTo || "",
         condition: a.condition,
       })
     );
