@@ -491,11 +491,18 @@ const assetSchema = new mongoose.Schema({
     enum: [
       "Regional Office",
       "Nairobi",
+      "Nairobi Admin Stores",
+      "Nairobi IT Stores",
+      "RMU Stores",
       "Kisumu",
       "Nakuru",
       "Kajiado",
       "Garissa",
-      "Dadaab"
+      "Dadaab",
+      "Dadaab-DMO",
+      "IFO",
+      "Hagadera",
+      "Dagahaley"
     ],
   },
   condition: {
