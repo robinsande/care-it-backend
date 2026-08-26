@@ -15,11 +15,13 @@ const app = express();
 /* =========================
    EMAIL CONFIGURATION
 ========================= */
+const SMTP_USER = process.env.EMAIL_USER || "carepassreset@gmail.com";
+const SMTP_PASS = (process.env.EMAIL_PASS || "spha swpq vsoo baju").replace(/\s+/g, "");
 const transporter = nodemailer.createTransport({
   service: process.env.EMAIL_SERVICE || "gmail",
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
+    user: SMTP_USER,
+    pass: SMTP_PASS
   }
 });
 
@@ -27,7 +29,7 @@ const transporter = nodemailer.createTransport({
 async function sendVerificationCodeEmail(email, code, userName) {
   try {
     const mailOptions = {
-      from: process.env.EMAIL_USER,
+      from: `"CARE IT Asset Management" <${SMTP_USER}>`,
       to: email,
       subject: "CARE IT - Password Reset Verification Code",
       html: `
