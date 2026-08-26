@@ -447,7 +447,7 @@ const assetSchema = new mongoose.Schema({
   assetTag: { type: String, required: true, unique: true, uppercase: true },
   category: {
     type: String,
-    enum: ["Laptops", "Mobile Phones", "Monitors","Projectors","TV","Printers", "Copiers", "Network Devices"],
+    enum: ["Laptops", "Mobile Phones", "Monitors","Projectors","TV","Printers", "Copiers", "Network Devices", "Tablets"],
     required: true,
   },
   brand: String,
@@ -469,6 +469,7 @@ const assetSchema = new mongoose.Schema({
       "Administration & Logistics",
       "Procurement",
       "IT",
+      "Communications",
       "Programs",
       "CASCADE",
       "Women Voices and Leadership (WVL)",
