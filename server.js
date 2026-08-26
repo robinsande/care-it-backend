@@ -875,6 +875,19 @@ app.get("/api/dashboard/category/new", auth, async (req, res) => {
   }
 });
 
+app.get("/api/dashboard/category/good", auth, async (req, res) => {
+  try {
+    const stats = await Asset.aggregate([
+      { $match: { condition: { $in: ["Good", "New"] } } },
+      { $group: { _id: "$category", count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 app.get("/api/dashboard/category/lost", auth, async (req, res) => {
   try {
     const stats = await Asset.aggregate([
