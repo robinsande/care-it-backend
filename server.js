@@ -625,32 +625,74 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
     let errorCount = 0;
     const errors = [];
 
+    const headerRow = worksheet.getRow(1);
+    const colMap = {};
+    headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const header = cell.value?.toString().trim().toLowerCase().replace(/\s+/g, ' ') || '';
+      colMap[header] = colNumber;
+    });
+
+    const getCol = (names) => {
+      for (const name of names) {
+        const key = name.toLowerCase().trim().replace(/\s+/g, ' ');
+        if (colMap[key]) return colMap[key];
+      }
+      return null;
+    };
+
+    const colAssetTag = getCol(['Asset Tag', 'AssetTag', 'Tag']) || 1;
+    const colCategory = getCol(['Category']) || 2;
+    const colBrand = getCol(['Brand']) || 3;
+    const colModel = getCol(['Model']) || 4;
+    const colSerial = getCol(['Serial Number', 'SerialNumber', 'Serial No', 'SN']) || 5;
+    const colPurchaseDate = getCol(['Purchase Date', 'PurchaseDate', 'Date Purchased']) || 6;
+    const colPurchasePrice = getCol(['Purchase Price', 'PurchasePrice', 'Price', 'Cost']) || 7;
+    const colStatus = getCol(['Status']) || 8;
+    const colDepartment = getCol(['Department', 'Dept']) || 9;
+    const colLocation = getCol(['Location']) || 10;
+    const colCondition = getCol(['Condition']) || 11;
+
     worksheet.eachRow((row, rowNumber) => {
-      if (rowNumber === 1) return; // Skip header row
+      if (rowNumber === 1) return;
 
       try {
+        const rawDate = row.getCell(colPurchaseDate).value;
+        let purchaseDate = rawDate;
+        if (rawDate instanceof Date) {
+          purchaseDate = rawDate;
+        } else if (typeof rawDate === 'string' && rawDate.trim()) {
+          const d = new Date(rawDate);
+          if (!isNaN(d.getTime())) purchaseDate = d;
+        } else if (typeof rawDate === 'number') {
+          const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+          purchaseDate = new Date(excelEpoch.getTime() + rawDate * 86400000);
+        }
+
+        let purchasePrice = row.getCell(colPurchasePrice).value;
+        if (purchasePrice && typeof purchasePrice === 'object' && purchasePrice.result !== undefined) {
+          purchasePrice = purchasePrice.result;
+        }
+
         const assetData = {
-          assetTag: row.getCell(1).value?.toString().toUpperCase().trim(),
-          category: row.getCell(2).value?.toString().trim(),
-          brand: row.getCell(3).value?.toString().trim(),
-          model: row.getCell(4).value?.toString().trim(),
-          serialNumber: row.getCell(5).value?.toString().trim(),
-          purchaseDate: row.getCell(6).value,
-          purchasePrice: row.getCell(7).value,
-          status: row.getCell(8).value?.toString().trim() || "Available",
-          department: row.getCell(9).value?.toString().trim(),
-          location: row.getCell(10).value?.toString().trim(),
-          condition: row.getCell(11).value?.toString().trim() || "Good",
+          assetTag: row.getCell(colAssetTag).value?.toString().toUpperCase().trim(),
+          category: row.getCell(colCategory).value?.toString().trim(),
+          brand: row.getCell(colBrand).value?.toString().trim(),
+          model: row.getCell(colModel).value?.toString().trim(),
+          serialNumber: row.getCell(colSerial).value?.toString().trim(),
+          purchaseDate: purchaseDate,
+          purchasePrice: purchasePrice,
+          status: row.getCell(colStatus).value?.toString().trim() || "Available",
+          department: row.getCell(colDepartment).value?.toString().trim(),
+          location: row.getCell(colLocation).value?.toString().trim(),
+          condition: row.getCell(colCondition).value?.toString().trim() || "Good",
         };
 
-        // Validate required fields
         if (!assetData.assetTag || !assetData.category) {
           errorCount++;
           errors.push(`Row ${rowNumber}: Missing Asset Tag or Category`);
           return;
         }
 
-        // Remove undefined/null values
         Object.keys(assetData).forEach(key => {
           if (assetData[key] === undefined || assetData[key] === null || assetData[key] === '') {
             delete assetData[key];
@@ -814,9 +856,8 @@ app.get("/api/export/excel", auth, async (req, res) => {
       { header: "Purchase Date", key: "purchaseDate", width: 15 },
       { header: "Purchase Price", key: "purchasePrice", width: 15 },
       { header: "Status", key: "status", width: 15 },
-      { header: "Assigned To", key: "assignedTo", width: 20 },
+      { header: "Department", key: "department", width: 25 },
       { header: "Location", key: "location", width: 25 },
-      { header: "Department", key: "department", width: 20 },
       { header: "Condition", key: "condition", width: 15 },
     ];
 
@@ -830,12 +871,57 @@ app.get("/api/export/excel", auth, async (req, res) => {
         purchaseDate: a.purchaseDate,
         purchasePrice: a.purchasePrice,
         status: a.status,
-        assignedTo: a.assignedTo,
-        location: a.location,
         department: a.department,
+        location: a.location,
         condition: a.condition,
       })
     );
+
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" }, name: "Times New Roman" };
+    headerRow.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF2F5496" },
+    };
+    headerRow.height = 28;
+    headerRow.alignment = { vertical: "middle" };
+
+    sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      row.font = { name: "Times New Roman" };
+      if (rowNumber > 1) {
+        row.alignment = { vertical: "middle" };
+        if (rowNumber % 2 === 0) {
+          row.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFD6E4F0" },
+          };
+        } else {
+          row.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFB8CCE4" },
+          };
+        }
+      }
+    });
+
+    sheet.eachRow((row) => {
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        cell.border = {
+          top: { style: "thin", color: { argb: "FF95B3D7" } },
+          left: { style: "thin", color: { argb: "FF95B3D7" } },
+          bottom: { style: "thin", color: { argb: "FF95B3D7" } },
+          right: { style: "thin", color: { argb: "FF95B3D7" } },
+        };
+      });
+    });
+
+    sheet.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: 1, column: sheet.columns.length },
+    };
 
     res.setHeader(
       "Content-Type",
