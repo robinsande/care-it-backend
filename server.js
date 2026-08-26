@@ -822,9 +822,9 @@ app.get("/api/dashboard/status", auth, async (req, res) => {
     res.json([
       { _id: "Available (Ready for Issuing)", status: "Available", count: map["Available"] || 0 },
       { _id: "In Storage (Can be Issued to Staff)", status: "In Storage", count: map["In Storage"] || 0 },
-      { _id: "Assigned (In Use)", status: "Assigned", count: map["Assigned"] || 0 },
+      { _id: "Assigned (Assigned to Staff - In Use)", status: "Assigned", count: map["Assigned"] || 0 },
       { _id: "Under Repair (Faulty - Can be Fixed)", status: "Under Repair", count: map["Under Repair"] || 0 },
-      { _id: "Faulty / Damaged (Condition)", status: "Faulty", count: damagedFaulty || 0 },
+      { _id: "Faulty / Damaged (Can be Fixed)", status: "Faulty", count: damagedFaulty || 0 },
       { _id: "Lost", status: "Lost", count: map["Lost"] || 0 }
     ]);
   } catch (err) {
