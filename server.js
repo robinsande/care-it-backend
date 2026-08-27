@@ -488,7 +488,8 @@ const assetSchema = new mongoose.Schema({
       "Risk and Compliance",
       "ESA",
       "Human Resource",
-      "Private sector Engagement"
+      "Private sector Engagement",
+      "Project Driver"
     ],
   },
   location: {
