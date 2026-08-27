@@ -517,6 +517,30 @@ const assetSchema = new mongoose.Schema({
     enum: ["New", "Good", "Faulty", "BER", "Damaged"],
     default: "Good",
   },
+  generation: {
+    type: String,
+    enum: [
+      "8th Gen", "9th Gen", "10th Gen", "11th Gen",
+      "12th Gen", "13th Gen", "14th Gen", "15th Gen",
+      "Latest"
+    ],
+  },
+  processor: {
+    type: String,
+    enum: [
+      "Intel Core i3", "Intel Core i5", "Intel Core i7", "Intel Core i9",
+      "Intel Core Ultra 5", "Intel Core Ultra 7", "Intel Core Ultra 9",
+      "AMD Ryzen 3", "AMD Ryzen 5", "AMD Ryzen 7", "AMD Ryzen 9"
+    ],
+  },
+  ram: {
+    type: String,
+    enum: ["4GB", "8GB", "16GB", "32GB", "64GB"],
+  },
+  ssd: {
+    type: String,
+    enum: ["128GB", "256GB", "512GB", "1TB", "2TB", "4TB"],
+  },
   history: [
     {
       action: String,
@@ -584,7 +608,12 @@ app.get("/api/assets/search/:query", auth, async (req, res) => {
         { serialNumber: { $regex: req.params.query, $options: "i" } },
         { model: { $regex: req.params.query, $options: "i" } },
         { assignedTo: { $regex: req.params.query, $options: "i" } },
-        { "returnInfo.returnedBy": { $regex: req.params.query, $options: "i" } }
+        { "returnInfo.returnedBy": { $regex: req.params.query, $options: "i" } },
+        { generation: { $regex: req.params.query, $options: "i" } },
+        { processor: { $regex: req.params.query, $options: "i" } },
+        { ram: { $regex: req.params.query, $options: "i" } },
+        { ssd: { $regex: req.params.query, $options: "i" } },
+        { brand: { $regex: req.params.query, $options: "i" } }
       ]
     }).sort({ createdAt: -1 });
     res.json(assets);
@@ -653,15 +682,19 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
     const colBrand = getCol(['Brand']) || 3;
     const colModel = getCol(['Model']) || 4;
     const colSerial = getCol(['Serial Number', 'SerialNumber', 'Serial No', 'SN']) || 5;
-    const colPurchaseDate = getCol(['Purchase Date', 'PurchaseDate', 'Date Purchased']) || 6;
-    const colPurchasePrice = getCol(['Purchase Price', 'PurchasePrice', 'Price', 'Cost']) || 7;
-    const colStatus = getCol(['Status']) || 8;
-    const colDepartment = getCol(['Department', 'Dept']) || 9;
-    const colLocation = getCol(['Location']) || 10;
-    const colAssignedTo = getCol(['Assigned To', 'AssignedTo', 'Assignee', 'Staff Name', 'Owner']) || 11;
-    const colReturnedBy = getCol(['Returned By', 'ReturnedBy', 'Returner', 'Returned By Name']) || 12;
-    const colReturnDate = getCol(['Return Date', 'ReturnDate', 'Date Returned', 'Returned Date']) || 13;
-    const colCondition = getCol(['Condition']) || 14;
+    const colGeneration = getCol(['Generation', 'Gen', 'CPU Gen', 'Processor Gen']) || 6;
+    const colProcessor = getCol(['Processor', 'CPU', 'Cpu', 'Chip']) || 7;
+    const colRAM = getCol(['RAM', 'Memory', 'Ram Memory']) || 8;
+    const colSSD = getCol(['SSD', 'Storage', 'Disk', 'Hard Disk', 'HDD', 'Ssd']) || 9;
+    const colPurchaseDate = getCol(['Purchase Date', 'PurchaseDate', 'Date Purchased']) || 10;
+    const colPurchasePrice = getCol(['Purchase Price', 'PurchasePrice', 'Price', 'Cost']) || 11;
+    const colStatus = getCol(['Status']) || 12;
+    const colDepartment = getCol(['Department', 'Dept']) || 13;
+    const colLocation = getCol(['Location']) || 14;
+    const colAssignedTo = getCol(['Assigned To', 'AssignedTo', 'Assignee', 'Staff Name', 'Owner']) || 15;
+    const colReturnedBy = getCol(['Returned By', 'ReturnedBy', 'Returner', 'Returned By Name']) || 16;
+    const colReturnDate = getCol(['Return Date', 'ReturnDate', 'Date Returned', 'Returned Date']) || 17;
+    const colCondition = getCol(['Condition']) || 18;
 
     worksheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return;
@@ -702,6 +735,10 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
           brand: row.getCell(colBrand).value?.toString().trim(),
           model: row.getCell(colModel).value?.toString().trim(),
           serialNumber: row.getCell(colSerial).value?.toString().trim(),
+          generation: row.getCell(colGeneration).value?.toString().trim(),
+          processor: row.getCell(colProcessor).value?.toString().trim(),
+          ram: row.getCell(colRAM).value?.toString().trim(),
+          ssd: row.getCell(colSSD).value?.toString().trim(),
           purchaseDate: purchaseDate,
           purchasePrice: purchasePrice,
           status: row.getCell(colStatus).value?.toString().trim() || "Available",
@@ -1054,6 +1091,10 @@ app.get("/api/export/excel", auth, async (req, res) => {
       { header: "Brand", key: "brand", width: 15 },
       { header: "Model", key: "model", width: 20 },
       { header: "Serial Number", key: "serialNumber", width: 25 },
+      { header: "Generation", key: "generation", width: 14 },
+      { header: "Processor", key: "processor", width: 22 },
+      { header: "RAM", key: "ram", width: 10 },
+      { header: "SSD", key: "ssd", width: 10 },
       { header: "Purchase Date", key: "purchaseDate", width: 15 },
       { header: "Purchase Price", key: "purchasePrice", width: 15 },
       { header: "Status", key: "status", width: 15 },
@@ -1072,6 +1113,10 @@ app.get("/api/export/excel", auth, async (req, res) => {
         brand: a.brand,
         model: a.model,
         serialNumber: a.serialNumber,
+        generation: a.generation || "",
+        processor: a.processor || "",
+        ram: a.ram || "",
+        ssd: a.ssd || "",
         purchaseDate: a.purchaseDate,
         purchasePrice: a.purchasePrice,
         status: a.status,
@@ -1165,6 +1210,10 @@ app.get("/api/export/pdf", auth, async (req, res) => {
       const returnedBy = a.returnInfo?.returnedBy;
       const returnDate = a.returnInfo?.returnDate;
       let line = `${i + 1}. ${a.assetTag} | ${a.category} | ${a.status} | ${a.location}`;
+      if (a.generation) line += ` | ${a.generation}`;
+      if (a.processor) line += ` | ${a.processor}`;
+      if (a.ram) line += ` | ${a.ram} RAM`;
+      if (a.ssd) line += ` | ${a.ssd} SSD`;
       if (a.assignedTo) line += ` | Assigned: ${a.assignedTo}`;
       if (returnedBy) line += ` | Returned By: ${returnedBy}`;
       if (returnDate) line += ` | Return Date: ${new Date(returnDate).toLocaleDateString()}`;
