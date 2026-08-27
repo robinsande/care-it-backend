@@ -535,7 +535,7 @@ const assetSchema = new mongoose.Schema({
   },
   ram: {
     type: String,
-    enum: ["4GB", "8GB", "16GB", "32GB", "64GB"],
+    enum: ["8GB", "16GB", "32GB", "64GB"],
   },
   ssd: {
     type: String,
