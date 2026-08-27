@@ -657,7 +657,9 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
     const colDepartment = getCol(['Department', 'Dept']) || 9;
     const colLocation = getCol(['Location']) || 10;
     const colAssignedTo = getCol(['Assigned To', 'AssignedTo', 'Assignee', 'Staff Name', 'Owner']) || 11;
-    const colCondition = getCol(['Condition']) || 12;
+    const colReturnedBy = getCol(['Returned By', 'ReturnedBy', 'Returner', 'Returned By Name']) || 12;
+    const colReturnDate = getCol(['Return Date', 'ReturnDate', 'Date Returned', 'Returned Date']) || 13;
+    const colCondition = getCol(['Condition']) || 14;
 
     worksheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return;
@@ -673,6 +675,18 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
         } else if (typeof rawDate === 'number') {
           const excelEpoch = new Date(Date.UTC(1899, 11, 30));
           purchaseDate = new Date(excelEpoch.getTime() + rawDate * 86400000);
+        }
+
+        const rawReturnDate = row.getCell(colReturnDate).value;
+        let returnDate = null;
+        if (rawReturnDate instanceof Date) {
+          returnDate = rawReturnDate;
+        } else if (typeof rawReturnDate === 'string' && rawReturnDate.trim()) {
+          const rd = new Date(rawReturnDate);
+          if (!isNaN(rd.getTime())) returnDate = rd;
+        } else if (typeof rawReturnDate === 'number') {
+          const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+          returnDate = new Date(excelEpoch.getTime() + rawReturnDate * 86400000);
         }
 
         let purchasePrice = row.getCell(colPurchasePrice).value;
@@ -695,6 +709,14 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
           condition: row.getCell(colCondition).value?.toString().trim() || "Good",
         };
 
+        const returnedByVal = row.getCell(colReturnedBy).value?.toString().trim();
+        if (returnedByVal || returnDate) {
+          assetData.returnInfo = {
+            returnedBy: returnedByVal || "",
+            returnDate: returnDate || undefined,
+          };
+        }
+
         if (!assetData.assetTag || !assetData.category) {
           errorCount++;
           errors.push(`Row ${rowNumber}: Missing Asset Tag or Category`);
@@ -703,9 +725,16 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
 
         Object.keys(assetData).forEach(key => {
           if (assetData[key] === undefined || assetData[key] === null || assetData[key] === '') {
+            if (key === 'returnInfo') return;
             delete assetData[key];
           }
         });
+        if (assetData.returnInfo) {
+          const ri = assetData.returnInfo;
+          if ((!ri.returnedBy || ri.returnedBy === '') && !ri.returnDate) {
+            delete assetData.returnInfo;
+          }
+        }
 
         assets.push(assetData);
       } catch (err) {
@@ -1131,9 +1160,13 @@ app.get("/api/export/pdf", auth, async (req, res) => {
     doc.moveDown();
 
     assets.forEach((a, i) => {
-      doc.fontSize(10).text(
-        `${i + 1}. ${a.assetTag} | ${a.category} | ${a.status} | ${a.location}`
-      );
+      const returnedBy = a.returnInfo?.returnedBy;
+      const returnDate = a.returnInfo?.returnDate;
+      let line = `${i + 1}. ${a.assetTag} | ${a.category} | ${a.status} | ${a.location}`;
+      if (a.assignedTo) line += ` | Assigned: ${a.assignedTo}`;
+      if (returnedBy) line += ` | Returned By: ${returnedBy}`;
+      if (returnDate) line += ` | Return Date: ${new Date(returnDate).toLocaleDateString()}`;
+      doc.fontSize(10).text(line);
     });
 
     doc.end();
