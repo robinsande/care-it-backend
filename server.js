@@ -499,6 +499,7 @@ const assetSchema = new mongoose.Schema({
       "Nairobi",
       "Nairobi Admin Stores",
       "Nairobi IT Stores",
+      "Nairobi Regional Stores",
       "RMU Stores",
       "Kisumu",
       "Nakuru",
