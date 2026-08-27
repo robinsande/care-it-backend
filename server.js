@@ -486,7 +486,9 @@ const assetSchema = new mongoose.Schema({
       "PQLA / MEAL– Program Quality Learning & Accountability",
       "Programs & Fund raising",
       "Risk and Compliance",
-      "ESA"
+      "ESA",
+      "Human Resource",
+      "Private sector Engagement"
     ],
   },
   location: {
@@ -579,7 +581,8 @@ app.get("/api/assets/search/:query", auth, async (req, res) => {
         { assetTag: { $regex: req.params.query, $options: "i" } },
         { serialNumber: { $regex: req.params.query, $options: "i" } },
         { model: { $regex: req.params.query, $options: "i" } },
-        { assignedTo: { $regex: req.params.query, $options: "i" } }
+        { assignedTo: { $regex: req.params.query, $options: "i" } },
+        { "returnInfo.returnedBy": { $regex: req.params.query, $options: "i" } }
       ]
     }).sort({ createdAt: -1 });
     res.json(assets);
@@ -794,7 +797,8 @@ app.put("/api/assets/:id/return", auth, async (req, res) => {
 
     asset.history.push({
       action: "Returned",
-      notes: req.body.notes || "Asset returned",
+      assignedTo: req.body.returnedBy,
+      notes: req.body.notes || `Asset returned by ${req.body.returnedBy || "unknown"}`,
       date: new Date(),
     });
 
@@ -1025,6 +1029,8 @@ app.get("/api/export/excel", auth, async (req, res) => {
       { header: "Department", key: "department", width: 25 },
       { header: "Location", key: "location", width: 25 },
       { header: "Assigned To", key: "assignedTo", width: 28 },
+      { header: "Returned By", key: "returnedBy", width: 28 },
+      { header: "Return Date", key: "returnDate", width: 15 },
       { header: "Condition", key: "condition", width: 15 },
     ];
 
@@ -1041,6 +1047,8 @@ app.get("/api/export/excel", auth, async (req, res) => {
         department: a.department,
         location: a.location,
         assignedTo: a.assignedTo || "",
+        returnedBy: a.returnInfo?.returnedBy || "",
+        returnDate: a.returnInfo?.returnDate || "",
         condition: a.condition,
       })
     );
