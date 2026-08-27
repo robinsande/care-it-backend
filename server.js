@@ -524,6 +524,7 @@ const assetSchema = new mongoose.Schema({
       "12th Gen", "13th Gen", "14th Gen", "15th Gen",
       "Latest"
     ],
+    set: v => (v == null || v === "") ? undefined : v,
   },
   processor: {
     type: String,
@@ -532,14 +533,17 @@ const assetSchema = new mongoose.Schema({
       "Intel Core Ultra 5", "Intel Core Ultra 7", "Intel Core Ultra 9",
       "AMD Ryzen 3", "AMD Ryzen 5", "AMD Ryzen 7", "AMD Ryzen 9"
     ],
+    set: v => (v == null || v === "") ? undefined : v,
   },
   ram: {
     type: String,
     enum: ["8GB", "16GB", "32GB", "64GB"],
+    set: v => (v == null || v === "") ? undefined : v,
   },
   ssd: {
     type: String,
     enum: ["128GB", "256GB", "512GB", "1TB", "2TB", "4TB"],
+    set: v => (v == null || v === "") ? undefined : v,
   },
   history: [
     {
