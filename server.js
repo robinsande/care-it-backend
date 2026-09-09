@@ -130,7 +130,7 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, unique: true, lowercase: true, trim: true, required: true },
   password: { type: String, required: true },
-  role: { type: String, enum: ["user", "admin"], default: "user" },
+  role: { type: String, enum: ["user", "viewer", "admin", "superadmin"], default: "user" },
 }, { timestamps: true });
 
 const User = mongoose.model("User", userSchema);
@@ -169,8 +169,15 @@ const auth = (req, res, next) => {
 };
 
 const adminOnly = (req, res, next) => {
-  if (!req.user || req.user.role !== "admin") {
-    return res.status(403).json({ message: "Admin only" });
+  if (!req.user || !["admin", "superadmin"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Admin access required" });
+  }
+  next();
+};
+
+const superAdminOnly = (req, res, next) => {
+  if (!req.user || req.user.role !== "superadmin") {
+    return res.status(403).json({ message: "Super admin access required" });
   }
   next();
 };
@@ -288,7 +295,6 @@ app.post("/api/auth/create-admin", auth, adminOnly, async (req, res) => {
       return res.status(400).json({ message: "Email already exists" });
     }
 
-    // Hash password before saving
     const hashedPassword = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS || 10));
 
     const user = new User({ 
@@ -307,6 +313,77 @@ app.post("/api/auth/create-admin", auth, adminOnly, async (req, res) => {
 
   } catch (err) {
     console.error("Create Admin Error:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET ALL USERS
+app.get("/api/users", auth, adminOnly, async (req, res) => {
+  try {
+    const users = await User.find().select("-password").sort({ createdAt: -1 });
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// CREATE USER / VIEWER / ADMIN
+app.post("/api/users", auth, adminOnly, async (req, res) => {
+  try {
+    const { name, email, password, role } = req.body;
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ message: "Name, email and password are required" });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ message: "Password must be at least 6 characters" });
+    }
+
+    const allowedRoles = ["user", "viewer", "admin", "superadmin"];
+    const selectedRole = allowedRoles.includes(role) ? role : "user";
+
+    if (selectedRole === "superadmin" && req.user.role !== "superadmin") {
+      return res.status(403).json({ message: "Only the super admin can create another super admin" });
+    }
+
+    const existing = await User.findOne({ email: email.toLowerCase() });
+    if (existing) {
+      return res.status(400).json({ message: "Email already exists" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS || 10));
+    const user = new User({
+      name,
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      role: selectedRole,
+    });
+
+    await user.save();
+    res.status(201).json({
+      message: "User created successfully",
+      user: { id: user._id, name: user.name, email: user.email, role: user.role }
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.delete("/api/users/:id", auth, adminOnly, async (req, res) => {
+  try {
+    const targetUser = await User.findById(req.params.id);
+    if (!targetUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (targetUser.role === "superadmin" && req.user.role !== "superadmin") {
+      return res.status(403).json({ message: "Only the super admin can delete a super admin" });
+    }
+
+    await targetUser.deleteOne();
+    res.json({ message: "User deleted successfully" });
+  } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
@@ -569,6 +646,42 @@ const assetSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const Asset = mongoose.model("Asset", assetSchema);
+
+const returnedAssetSchema = new mongoose.Schema({
+  description: { type: String, required: true },
+  category: { type: String, enum: ["Laptops", "Mobile Phones", "Monitors", "Projectors", "TV", "Printers", "Copiers", "Network Devices", "Tablets", "Accessories", "Other"], default: "Other" },
+  brand: String,
+  model: String,
+  serialNumber: String,
+  returnedBy: { type: String, required: true },
+  receivedBy: String,
+  department: String,
+  location: String,
+  condition: { type: String, enum: ["New", "Good", "Faulty", "BER", "Damaged"], default: "Good" },
+  notes: String,
+  returnDate: { type: Date, default: Date.now },
+  status: { type: String, default: "Received" },
+}, { timestamps: true });
+
+const ReturnedAsset = mongoose.model("ReturnedAsset", returnedAssetSchema);
+
+const borrowedItemSchema = new mongoose.Schema({
+  itemName: { type: String, required: true },
+  category: { type: String, enum: ["Laptop", "Charger", "Monitor", "Projector", "Printer", "Router", "Tablet", "Phone", "Accessory", "Other"], default: "Other" },
+  description: String,
+  serialNumber: String,
+  assignedTo: { type: String, required: true },
+  department: String,
+  location: String,
+  condition: { type: String, enum: ["New", "Good", "Faulty", "BER", "Damaged"], default: "Good" },
+  issuedBy: String,
+  issueDate: { type: Date, default: Date.now },
+  returnDueDate: Date,
+  notes: String,
+  status: { type: String, enum: ["Issued", "Returned"], default: "Issued" },
+}, { timestamps: true });
+
+const BorrowedItem = mongoose.model("BorrowedItem", borrowedItemSchema);
 
 /* =========================
    ASSET ROUTES
@@ -837,16 +950,53 @@ app.put("/api/assets/:id/assign", auth, async (req, res) => {
     asset.department = req.body.department;
     asset.status = "Assigned";
 
+    const assignmentNote = req.body.description || req.body.notes || `Assigned to ${req.body.assignedTo || "staff"}`;
     asset.history.push({
       action: "Assigned",
       assignedTo: req.body.assignedTo,
       department: req.body.department,
-      notes: req.body.notes || "Asset assigned",
+      notes: assignmentNote,
     });
 
     await asset.save();
     res.json({ message: "Asset assigned", asset });
 
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.post("/api/assets/bulk-assign", auth, adminOnly, async (req, res) => {
+  try {
+    const { assetIds = [], assignedTo, department, description, notes } = req.body || {};
+
+    if (!assignedTo || !Array.isArray(assetIds) || assetIds.length === 0) {
+      return res.status(400).json({ message: "Assigned staff and at least one asset are required" });
+    }
+
+    const updatedAssets = [];
+    const assignmentNote = description || notes || `Assigned to ${assignedTo}`;
+
+    for (const assetId of assetIds) {
+      const asset = await Asset.findById(assetId);
+      if (!asset) continue;
+
+      asset.assignedTo = assignedTo;
+      asset.department = department || asset.department;
+      asset.status = "Assigned";
+      asset.history.push({
+        action: "Assigned",
+        assignedTo,
+        department: department || asset.department,
+        notes: assignmentNote,
+        date: new Date(),
+      });
+
+      await asset.save();
+      updatedAssets.push(asset);
+    }
+
+    res.json({ message: `${updatedAssets.length} asset(s) assigned successfully`, assets: updatedAssets });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -879,6 +1029,76 @@ app.put("/api/assets/:id/return", auth, async (req, res) => {
     await asset.save();
     res.json({ message: "Asset returned", asset });
 
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// UNREGISTERED RETURNED ASSET RECORD
+app.post("/api/returned-assets", auth, adminOnly, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const entry = await ReturnedAsset.create({
+      description: payload.description || payload.itemName || "Returned item",
+      category: payload.category || "Other",
+      brand: payload.brand || "",
+      model: payload.model || "",
+      serialNumber: payload.serialNumber || "",
+      returnedBy: payload.returnedBy || "",
+      receivedBy: payload.receivedBy || req.user?.email || "",
+      department: payload.department || "",
+      location: payload.location || "",
+      condition: payload.condition || "Good",
+      notes: payload.notes || "",
+      returnDate: payload.returnDate ? new Date(payload.returnDate) : new Date(),
+      status: payload.status || "Received",
+    });
+
+    res.status(201).json({ message: "Returned asset recorded", entry });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/returned-assets", auth, adminOnly, async (req, res) => {
+  try {
+    const items = await ReturnedAsset.find().sort({ createdAt: -1 });
+    res.json(items);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// IT ISSUE / BORROW RECORD
+app.post("/api/it-issues", auth, adminOnly, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const issue = await BorrowedItem.create({
+      itemName: payload.itemName || "IT item",
+      category: payload.category || "Other",
+      description: payload.description || "",
+      serialNumber: payload.serialNumber || "",
+      assignedTo: payload.assignedTo || "",
+      department: payload.department || "",
+      location: payload.location || "",
+      condition: payload.condition || "Good",
+      issuedBy: payload.issuedBy || req.user?.email || "",
+      issueDate: payload.issueDate ? new Date(payload.issueDate) : new Date(),
+      returnDueDate: payload.returnDueDate ? new Date(payload.returnDueDate) : null,
+      notes: payload.notes || "",
+      status: payload.status || "Issued",
+    });
+
+    res.status(201).json({ message: "IT item issued", issue });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/it-issues", auth, adminOnly, async (req, res) => {
+  try {
+    const issues = await BorrowedItem.find().sort({ createdAt: -1 });
+    res.json(issues);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
