@@ -635,6 +635,7 @@ const assetSchema = new mongoose.Schema({
   assignedTo: String,
   assignedItems: [{ type: String }],
   assignmentDetails: String,
+  assignmentItemDetails: { type: mongoose.Schema.Types.Mixed, default: {} },
   department: {
     type: String,
     enum: [
@@ -1054,6 +1055,9 @@ app.put("/api/assets/:id/assign", auth, async (req, res) => {
     }
 
     asset.assignmentDetails = req.body.assignmentDetails || req.body.description || req.body.notes || asset.assignmentDetails || "";
+    if (req.body.assignmentItemDetails !== undefined) {
+      asset.assignmentItemDetails = req.body.assignmentItemDetails;
+    }
 
     const assignmentNote = asset.assignmentDetails || `Assigned to ${req.body.assignedTo || "staff"}`;
     asset.history.push({
@@ -1095,6 +1099,9 @@ app.post("/api/assets/bulk-assign", auth, adminOnly, async (req, res) => {
         asset.assignedItems = asset.assignedItems || [];
       }
       asset.assignmentDetails = description || notes || asset.assignmentDetails || "";
+      if (req.body.assignmentItemDetails !== undefined) {
+        asset.assignmentItemDetails = req.body.assignmentItemDetails;
+      }
       asset.history.push({
         action: "Assigned",
         assignedTo,
