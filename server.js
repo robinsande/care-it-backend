@@ -6,6 +6,7 @@ const ExcelJS = require("exceljs");
 const PDFDocument = require("pdfkit");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const multer = require("multer");
 const nodemailer = require("nodemailer");
 require("dotenv").config();
@@ -130,6 +131,7 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, unique: true, lowercase: true, trim: true, required: true },
   password: { type: String, required: true },
+  mustChangePassword: { type: Boolean, default: false },
   role: { type: String, enum: ["user", "viewer", "admin", "superadmin"], default: "user" },
 }, { timestamps: true });
 
@@ -255,7 +257,7 @@ app.post("/api/auth/login", async (req, res) => {
     res.json({
       message: "Login successful",
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role }
+      user: { id: user._id, name: user.name, email: user.email, role: user.role, mustChangePassword: user.mustChangePassword }
     });
 
   } catch (err) {
@@ -364,6 +366,64 @@ app.post("/api/users", auth, adminOnly, async (req, res) => {
     res.status(201).json({
       message: "User created successfully",
       user: { id: user._id, name: user.name, email: user.email, role: user.role }
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.put("/api/users/:id", auth, adminOnly, async (req, res) => {
+  try {
+    const { role } = req.body;
+    const targetUser = await User.findById(req.params.id);
+
+    if (!targetUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (targetUser.role === "superadmin" && req.user.role !== "superadmin") {
+      return res.status(403).json({ message: "Only the super admin can edit a super admin" });
+    }
+
+    const allowedRoles = ["user", "viewer", "admin", "superadmin"];
+    const selectedRole = allowedRoles.includes(role) ? role : targetUser.role;
+
+    if (selectedRole === "superadmin" && req.user.role !== "superadmin") {
+      return res.status(403).json({ message: "Only the super admin can assign the super admin role" });
+    }
+
+    targetUser.role = selectedRole;
+    await targetUser.save();
+
+    res.json({
+      message: "User role updated successfully",
+      user: { id: targetUser._id, name: targetUser.name, email: targetUser.email, role: targetUser.role }
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.post("/api/users/:id/reset-password", auth, adminOnly, async (req, res) => {
+  try {
+    const targetUser = await User.findById(req.params.id);
+    if (!targetUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (targetUser.role === "superadmin" && req.user.role !== "superadmin") {
+      return res.status(403).json({ message: "Only the super admin can reset a super admin password" });
+    }
+
+    const temporaryPassword = crypto.randomBytes(9).toString("base64url").slice(0, 12);
+    targetUser.password = await bcrypt.hash(temporaryPassword, parseInt(process.env.BCRYPT_ROUNDS || 10));
+    targetUser.mustChangePassword = true;
+    await targetUser.save();
+
+    res.json({
+      message: "Temporary password generated successfully",
+      temporaryPassword,
+      user: { id: targetUser._id, name: targetUser.name, email: targetUser.email }
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -503,6 +563,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
     // Hash and update password
     const hashedPassword = await bcrypt.hash(newPassword, parseInt(process.env.BCRYPT_ROUNDS || 10));
     user.password = hashedPassword;
+    user.mustChangePassword = false;
     await user.save();
 
     // Delete all reset records for this user
@@ -516,6 +577,38 @@ app.post("/api/auth/reset-password", async (req, res) => {
   } catch (err) {
     console.error("Reset Password Error:", err);
     res.status(500).json({ message: err.message || "Error resetting password" });
+  }
+});
+
+app.post("/api/auth/change-password", auth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: "Current and new password are required" });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: "Password must be at least 6 characters" });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const currentPasswordMatches = await bcrypt.compare(currentPassword, user.password);
+    if (!currentPasswordMatches) {
+      return res.status(400).json({ message: "Current password is incorrect" });
+    }
+
+    user.password = await bcrypt.hash(newPassword, parseInt(process.env.BCRYPT_ROUNDS || 10));
+    user.mustChangePassword = false;
+    await user.save();
+
+    res.json({ message: "Password changed successfully", success: true });
+  } catch (err) {
+    res.status(500).json({ message: err.message || "Error changing password" });
   }
 });
 
@@ -540,6 +633,8 @@ const assetSchema = new mongoose.Schema({
     default: "Available",
   },
   assignedTo: String,
+  assignedItems: [{ type: String }],
+  assignmentDetails: String,
   department: {
     type: String,
     enum: [
@@ -950,7 +1045,17 @@ app.put("/api/assets/:id/assign", auth, async (req, res) => {
     asset.department = req.body.department;
     asset.status = "Assigned";
 
-    const assignmentNote = req.body.description || req.body.notes || `Assigned to ${req.body.assignedTo || "staff"}`;
+    if (Array.isArray(req.body.assignedItems) && req.body.assignedItems.length) {
+      asset.assignedItems = req.body.assignedItems;
+    } else if (req.body.assignedItems === undefined) {
+      asset.assignedItems = asset.assignedItems || [];
+    } else {
+      asset.assignedItems = [];
+    }
+
+    asset.assignmentDetails = req.body.assignmentDetails || req.body.description || req.body.notes || asset.assignmentDetails || "";
+
+    const assignmentNote = asset.assignmentDetails || `Assigned to ${req.body.assignedTo || "staff"}`;
     asset.history.push({
       action: "Assigned",
       assignedTo: req.body.assignedTo,
@@ -984,6 +1089,12 @@ app.post("/api/assets/bulk-assign", auth, adminOnly, async (req, res) => {
       asset.assignedTo = assignedTo;
       asset.department = department || asset.department;
       asset.status = "Assigned";
+      if (Array.isArray(req.body.assignedItems) && req.body.assignedItems.length) {
+        asset.assignedItems = req.body.assignedItems;
+      } else {
+        asset.assignedItems = asset.assignedItems || [];
+      }
+      asset.assignmentDetails = description || notes || asset.assignmentDetails || "";
       asset.history.push({
         action: "Assigned",
         assignedTo,
