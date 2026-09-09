@@ -502,6 +502,8 @@ const assetSchema = new mongoose.Schema({
       "Nairobi Regional Stores",
       "RMU Stores",
       "Kisumu",
+      "Migori",
+      "Busia",
       "Nakuru",
       "Kajiado",
       "Garissa",
