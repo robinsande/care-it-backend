@@ -993,7 +993,7 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
     const colCondition = importColumn(colMap, ['Condition', 'Asset Condition'], 18);
     const colLaptopModel = importColumn(colMap, ['Laptop Model'], null);
     const colLaptopSerial = importColumn(colMap, ['Laptop Serial No', 'Laptop Serial Number'], null);
-    const colLaptopTag = importColumn(colMap, ['Laptop Asset Tag No', 'Laptop Asset Tag'], null);
+    const colLaptopTag = importColumn(colMap, ['Laptop CARE Asset Tag No', 'Laptop Asset Tag No', 'Laptop Asset Tag'], null);
     const colPhoneModel = importColumn(colMap, ['Mobile Phone', 'Mobile Phone Model', 'Phone Model'], null);
     const colPhoneSerial = importColumn(colMap, ['Mobile No', 'Mobile Phone No', 'Phone Number'], null);
     const colPhoneTag = importColumn(colMap, ['Mobile Phone Asset Tag No', 'Mobile Phone Asset Tag', 'Phone Asset Tag'], null);
