@@ -959,7 +959,14 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
     let errorCount = 0;
     const errors = [];
 
-    const headerRow = worksheet.getRow(1);
+    let headerRowNumber = 1;
+    worksheet.eachRow((row, rowNumber) => {
+      const rowHeaders = row.values.map(value => normalizeImportHeader(value)).filter(Boolean);
+      if (rowHeaders.includes('staff name') || rowHeaders.includes('asset tag') || rowHeaders.includes('laptop asset tag no')) {
+        headerRowNumber = rowNumber;
+      }
+    });
+    const headerRow = worksheet.getRow(headerRowNumber);
     const colMap = {};
     headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
       const header = normalizeImportHeader(cell.value);
@@ -997,7 +1004,7 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
     const conditionAliases = { new: 'New', good: 'Good', ok: 'Good', faulty: 'Faulty', damaged: 'Damaged', ber: 'BER' };
 
     worksheet.eachRow((row, rowNumber) => {
-      if (rowNumber === 1) return;
+      if (rowNumber <= headerRowNumber) return;
 
       try {
         if (hasSeparateDeviceColumns) {
