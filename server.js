@@ -1422,6 +1422,50 @@ app.get("/api/dashboard/available/total", auth, async (req, res) => {
 /* =========================
    EXPORT EXCEL
 ========================= */
+const ASSET_EXPORT_COLUMNS = [
+  { header: "Asset Tag", key: "assetTag", width: 20 },
+  { header: "Category", key: "category", width: 20 },
+  { header: "Brand", key: "brand", width: 15 },
+  { header: "Model", key: "model", width: 20 },
+  { header: "Serial Number", key: "serialNumber", width: 25 },
+  { header: "Generation", key: "generation", width: 14 },
+  { header: "Processor", key: "processor", width: 22 },
+  { header: "RAM", key: "ram", width: 10 },
+  { header: "SSD", key: "ssd", width: 10 },
+  { header: "Purchase Date", key: "purchaseDate", width: 15 },
+  { header: "Purchase Price", key: "purchasePrice", width: 15 },
+  { header: "Status", key: "status", width: 15 },
+  { header: "Department", key: "department", width: 25 },
+  { header: "Location", key: "location", width: 25 },
+  { header: "Assigned To", key: "assignedTo", width: 28 },
+  { header: "Returned By", key: "returnedBy", width: 28 },
+  { header: "Return Date", key: "returnDate", width: 15 },
+  { header: "Condition", key: "condition", width: 15 },
+];
+
+function getAssetExportRow(asset) {
+  return {
+    assetTag: asset.assetTag,
+    category: asset.category,
+    brand: asset.brand,
+    model: asset.model,
+    serialNumber: asset.serialNumber,
+    generation: asset.generation || "",
+    processor: asset.processor || "",
+    ram: asset.ram || "",
+    ssd: asset.ssd || "",
+    purchaseDate: asset.purchaseDate,
+    purchasePrice: asset.purchasePrice,
+    status: asset.status,
+    department: asset.department,
+    location: asset.location,
+    assignedTo: asset.assignedTo || "",
+    returnedBy: asset.returnInfo?.returnedBy || "",
+    returnDate: asset.returnInfo?.returnDate || "",
+    condition: asset.condition,
+  };
+}
+
 app.get("/api/export/excel", auth, async (req, res) => {
   try {
     const assets = await Asset.find();
@@ -1429,49 +1473,9 @@ app.get("/api/export/excel", auth, async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("Assets Report");
 
-    sheet.columns = [
-      { header: "Asset Tag", key: "assetTag", width: 20 },
-      { header: "Category", key: "category", width: 20 },
-      { header: "Brand", key: "brand", width: 15 },
-      { header: "Model", key: "model", width: 20 },
-      { header: "Serial Number", key: "serialNumber", width: 25 },
-      { header: "Generation", key: "generation", width: 14 },
-      { header: "Processor", key: "processor", width: 22 },
-      { header: "RAM", key: "ram", width: 10 },
-      { header: "SSD", key: "ssd", width: 10 },
-      { header: "Purchase Date", key: "purchaseDate", width: 15 },
-      { header: "Purchase Price", key: "purchasePrice", width: 15 },
-      { header: "Status", key: "status", width: 15 },
-      { header: "Department", key: "department", width: 25 },
-      { header: "Location", key: "location", width: 25 },
-      { header: "Assigned To", key: "assignedTo", width: 28 },
-      { header: "Returned By", key: "returnedBy", width: 28 },
-      { header: "Return Date", key: "returnDate", width: 15 },
-      { header: "Condition", key: "condition", width: 15 },
-    ];
+    sheet.columns = ASSET_EXPORT_COLUMNS;
 
-    assets.forEach((a) =>
-      sheet.addRow({
-        assetTag: a.assetTag,
-        category: a.category,
-        brand: a.brand,
-        model: a.model,
-        serialNumber: a.serialNumber,
-        generation: a.generation || "",
-        processor: a.processor || "",
-        ram: a.ram || "",
-        ssd: a.ssd || "",
-        purchaseDate: a.purchaseDate,
-        purchasePrice: a.purchasePrice,
-        status: a.status,
-        department: a.department,
-        location: a.location,
-        assignedTo: a.assignedTo || "",
-        returnedBy: a.returnInfo?.returnedBy || "",
-        returnDate: a.returnInfo?.returnDate || "",
-        condition: a.condition,
-      })
-    );
+    assets.forEach((asset) => sheet.addRow(getAssetExportRow(asset)));
 
     const headerRow = sheet.getRow(1);
     headerRow.font = { bold: true, color: { argb: "FFFFFFFF" }, name: "Times New Roman" };
@@ -1539,29 +1543,84 @@ app.get("/api/export/pdf", auth, async (req, res) => {
   try {
     const assets = await Asset.find();
 
-    const doc = new PDFDocument({ margin: 30 });
+    const doc = new PDFDocument({
+      layout: "landscape",
+      size: "LEGAL",
+      margins: { top: 28, bottom: 28, left: 24, right: 24 },
+      bufferPages: true,
+    });
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", "attachment; filename=assets.pdf");
 
     doc.pipe(res);
 
-    doc.fontSize(18).text("CARE IT ASSET REPORT", { align: "center" });
-    doc.fontSize(10).text(`Generated: ${new Date().toLocaleDateString()}`, { align: "center" });
-    doc.moveDown();
+    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const pageBottom = doc.page.height - doc.page.margins.bottom;
+    const totalColumnWidth = ASSET_EXPORT_COLUMNS.reduce((sum, column) => sum + column.width, 0);
+    const columnWidths = ASSET_EXPORT_COLUMNS.map((column) => pageWidth * column.width / totalColumnWidth);
+    const rowData = assets.map(getAssetExportRow);
+    const headerHeight = 24;
+    const fontSize = 6.5;
 
-    assets.forEach((a, i) => {
-      const returnedBy = a.returnInfo?.returnedBy;
-      const returnDate = a.returnInfo?.returnDate;
-      let line = `${i + 1}. ${a.assetTag} | ${a.category} | ${a.status} | ${a.location}`;
-      if (a.generation) line += ` | ${a.generation}`;
-      if (a.processor) line += ` | ${a.processor}`;
-      if (a.ram) line += ` | ${a.ram} RAM`;
-      if (a.ssd) line += ` | ${a.ssd} SSD`;
-      if (a.assignedTo) line += ` | Assigned: ${a.assignedTo}`;
-      if (returnedBy) line += ` | Returned By: ${returnedBy}`;
-      if (returnDate) line += ` | Return Date: ${new Date(returnDate).toLocaleDateString()}`;
-      doc.fontSize(10).text(line);
+    const formatPdfValue = (value, key) => {
+      if (value == null || value === "") return "";
+      if (key === "purchaseDate" || key === "returnDate") return new Date(value).toLocaleDateString();
+      if (key === "purchasePrice") return Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return String(value);
+    };
+
+    const drawTableHeader = () => {
+      let x = doc.page.margins.left;
+      doc.font("Times-Bold").fontSize(fontSize).fillColor("#FFFFFF");
+      ASSET_EXPORT_COLUMNS.forEach((column, index) => {
+        const width = columnWidths[index];
+        doc.save().rect(x, doc.y, width, headerHeight).fill("#2F5496").restore();
+        doc.fillColor("#FFFFFF").text(column.header, x + 3, doc.y + 7, {
+          width: width - 6,
+          height: headerHeight - 6,
+          ellipsis: true,
+          lineBreak: false,
+        });
+        doc.rect(x, doc.y - headerHeight, width, headerHeight).stroke("#95B3D7");
+        x += width;
+      });
+      doc.y += headerHeight;
+    };
+
+    doc.font("Times-Bold").fontSize(16).fillColor("#1F2937").text("CARE IT ASSET REPORT", { align: "center" });
+    doc.font("Times-Roman").fontSize(9).fillColor("#4B5563").text(`Generated: ${new Date().toLocaleDateString()}`, { align: "center" });
+    doc.moveDown(0.8);
+    drawTableHeader();
+
+    rowData.forEach((row, rowIndex) => {
+      if (doc.y + 24 > pageBottom) {
+        doc.addPage();
+        drawTableHeader();
+      }
+
+      const rowTop = doc.y;
+      const cellHeights = ASSET_EXPORT_COLUMNS.map((column, index) => doc.heightOfString(formatPdfValue(row[column.key], column.key), {
+        width: columnWidths[index] - 6,
+        lineGap: 0,
+      }));
+      const rowHeight = Math.max(20, Math.min(52, Math.max(...cellHeights) + 7));
+      let x = doc.page.margins.left;
+
+      ASSET_EXPORT_COLUMNS.forEach((column, columnIndex) => {
+        const width = columnWidths[columnIndex];
+        const fill = rowIndex % 2 === 0 ? "#D6E4F0" : "#B8CCE4";
+        doc.save().rect(x, rowTop, width, rowHeight).fill(fill).restore();
+        doc.font("Times-Roman").fontSize(fontSize).fillColor("#1F2937").text(
+          formatPdfValue(row[column.key], column.key),
+          x + 3,
+          rowTop + 3,
+          { width: width - 6, height: rowHeight - 6, ellipsis: true, lineGap: 0 }
+        );
+        doc.rect(x, rowTop, width, rowHeight).stroke("#95B3D7");
+        x += width;
+      });
+      doc.y = rowTop + rowHeight;
     });
 
     doc.end();
