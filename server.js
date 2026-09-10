@@ -1135,7 +1135,7 @@ app.post("/api/import/image", auth, adminOnly, imageUpload.single("file"), async
 
       if (spreadsheetScreenshot) {
         const assetTags = [...line.matchAll(/\b\d{6}\b/g)].map(match => match[0]);
-        if (!assetTags.length || !/^\d+\s+/.test(line)) return;
+        if (!assetTags.length) return;
 
         const nameMatch = line.match(/^\d+\s+([A-Za-z][A-Za-z'-]+\s+[A-Za-z][A-Za-z'-]+)/);
         const assignedTo = nameMatch ? nameMatch[1] : undefined;
@@ -1192,6 +1192,29 @@ app.post("/api/import/image", auth, adminOnly, imageUpload.single("file"), async
         condition: "Good"
       });
     });
+
+    if (spreadsheetScreenshot && assets.length === 0) {
+      const detectedTags = [...data.text.matchAll(/\b\d{6}\b/g)]
+        .map(match => match[0])
+        .filter((tag, index, allTags) => allTags.indexOf(tag) === index);
+
+      for (let index = 0; index < detectedTags.length; index += 2) {
+        assets.push({
+          assetTag: detectedTags[index],
+          category: "Laptops",
+          status: "Assigned",
+          condition: "Good"
+        });
+        if (detectedTags[index + 1]) {
+          assets.push({
+            assetTag: detectedTags[index + 1],
+            category: "Mobile Phones",
+            status: "Assigned",
+            condition: "Good"
+          });
+        }
+      }
+    }
 
     let importedCount = 0;
     if (assets.length) {
