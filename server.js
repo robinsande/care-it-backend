@@ -9,6 +9,7 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const multer = require("multer");
 const nodemailer = require("nodemailer");
+const https = require("https");
 require("dotenv").config();
 
 const app = express();
@@ -16,24 +17,50 @@ const app = express();
 /* =========================
    EMAIL CONFIGURATION
 ========================= */
-const SMTP_USER = process.env.EMAIL_USER || "carepassreset@gmail.com";
-const SMTP_PASS = (process.env.EMAIL_PASS || "spha swpq vsoo baju").replace(/\s+/g, "");
-const transporter = nodemailer.createTransport({
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const EMAIL_SENDER = process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_USER;
+const EMAIL_SENDER_NAME = process.env.BREVO_SENDER_NAME || "CARE IT Asset Management";
+const SMTP_USER = process.env.EMAIL_USER;
+const SMTP_PASS = (process.env.EMAIL_PASS || "").replace(/\s+/g, "");
+const transporter = SMTP_USER && SMTP_PASS ? nodemailer.createTransport({
   service: process.env.EMAIL_SERVICE || "gmail",
-  auth: {
-    user: SMTP_USER,
-    pass: SMTP_PASS
-  }
-});
+  auth: { user: SMTP_USER, pass: SMTP_PASS }
+}) : null;
+
+function sendBrevoEmail(message) {
+  return new Promise((resolve, reject) => {
+    const request = https.request({
+      hostname: "api.brevo.com",
+      path: "/v3/smtp/email",
+      method: "POST",
+      headers: {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json"
+      }
+    }, response => {
+      let body = "";
+      response.on("data", chunk => { body += chunk; });
+      response.on("end", () => {
+        if (response.statusCode >= 200 && response.statusCode < 300) return resolve(body);
+        reject(new Error(`Brevo email failed (${response.statusCode}): ${body}`));
+      });
+    });
+
+    request.on("error", reject);
+    request.write(JSON.stringify(message));
+    request.end();
+  });
+}
 
 // Function to send verification code email
 async function sendVerificationCodeEmail(email, code, userName) {
   try {
-    const mailOptions = {
-      from: `"CARE IT Asset Management" <${SMTP_USER}>`,
-      to: email,
-      subject: "CARE IT - Password Reset Verification Code",
-      html: `
+    if (!EMAIL_SENDER) {
+      throw new Error("Set BREVO_SENDER_EMAIL in the backend environment");
+    }
+
+    const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px;">
             <h2 style="color: #1f2937; margin-top: 0;">CARE IT Asset Management</h2>
@@ -66,10 +93,28 @@ async function sendVerificationCodeEmail(email, code, userName) {
             </p>
           </div>
         </div>
-      `
+      `;
+
+    const message = {
+      sender: { email: EMAIL_SENDER, name: EMAIL_SENDER_NAME },
+      to: [{ email }],
+      subject: "CARE IT - Password Reset Verification Code",
+      htmlContent: html
     };
 
-    await transporter.sendMail(mailOptions);
+    if (BREVO_API_KEY) {
+      await sendBrevoEmail(message);
+    } else if (transporter) {
+      await transporter.sendMail({
+        from: `"${EMAIL_SENDER_NAME}" <${EMAIL_SENDER}>`,
+        to: email,
+        subject: message.subject,
+        html
+      });
+    } else {
+      throw new Error("Set BREVO_API_KEY and BREVO_SENDER_EMAIL in the backend environment");
+    }
+
     console.log(`✅ Verification code sent to ${email}`);
   } catch (error) {
     console.error("❌ Email sending error:", error);
