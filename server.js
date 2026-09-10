@@ -1571,21 +1571,22 @@ app.get("/api/export/pdf", auth, async (req, res) => {
     };
 
     const drawTableHeader = () => {
+      const headerTop = doc.y;
       let x = doc.page.margins.left;
       doc.font("Times-Bold").fontSize(fontSize).fillColor("#FFFFFF");
       ASSET_EXPORT_COLUMNS.forEach((column, index) => {
         const width = columnWidths[index];
-        doc.save().rect(x, doc.y, width, headerHeight).fill("#2F5496").restore();
-        doc.fillColor("#FFFFFF").text(column.header, x + 3, doc.y + 7, {
+        doc.save().rect(x, headerTop, width, headerHeight).fill("#2F5496").restore();
+        doc.fillColor("#FFFFFF").text(column.header, x + 3, headerTop + 7, {
           width: width - 6,
           height: headerHeight - 6,
           ellipsis: true,
           lineBreak: false,
         });
-        doc.rect(x, doc.y - headerHeight, width, headerHeight).stroke("#95B3D7");
+        doc.rect(x, headerTop, width, headerHeight).stroke("#95B3D7");
         x += width;
       });
-      doc.y += headerHeight;
+      doc.y = headerTop + headerHeight;
     };
 
     doc.font("Times-Bold").fontSize(16).fillColor("#1F2937").text("CARE IT ASSET REPORT", { align: "center" });
