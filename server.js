@@ -629,8 +629,8 @@ app.post("/api/auth/change-password", auth, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
 
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ message: "Current and new password are required" });
+    if (!newPassword) {
+      return res.status(400).json({ message: "New password is required" });
     }
 
     if (newPassword.length < 6) {
@@ -642,9 +642,14 @@ app.post("/api/auth/change-password", auth, async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const currentPasswordMatches = await bcrypt.compare(currentPassword, user.password);
-    if (!currentPasswordMatches) {
-      return res.status(400).json({ message: "Current password is incorrect" });
+    if (!user.mustChangePassword) {
+      if (!currentPassword) {
+        return res.status(400).json({ message: "Current password is required" });
+      }
+      const currentPasswordMatches = await bcrypt.compare(currentPassword, user.password);
+      if (!currentPasswordMatches) {
+        return res.status(400).json({ message: "Current password is incorrect" });
+      }
     }
 
     user.password = await bcrypt.hash(newPassword, parseInt(process.env.BCRYPT_ROUNDS || 10));
