@@ -10,6 +10,7 @@ const crypto = require("crypto");
 const multer = require("multer");
 const nodemailer = require("nodemailer");
 const https = require("https");
+const { createWorker } = require("tesseract.js");
 require("dotenv").config();
 
 const app = express();
@@ -151,6 +152,15 @@ const upload = multer({
     } else {
       cb(new Error("Only Excel files are allowed"));
     }
+  }
+});
+
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (/^image\/(jpeg|png|webp|bmp|tiff)$/.test(file.mimetype)) cb(null, true);
+    else cb(new Error("Only JPG, PNG, WEBP, BMP, or TIFF images are allowed"));
   }
 });
 
@@ -912,6 +922,28 @@ app.delete("/api/assets/:id", auth, adminOnly, async (req, res) => {
 /* =========================
    IMPORT EXCEL
 ========================= */
+const normalizeImportHeader = value => String(value || '')
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim();
+
+const normalizeImportValue = (value, allowed, aliases = {}) => {
+  const text = String(value || '').trim();
+  if (!text) return undefined;
+  const alias = aliases[normalizeImportHeader(text)] || text;
+  return allowed.find(item => normalizeImportHeader(item) === normalizeImportHeader(alias)) || alias;
+};
+
+const importColumn = (colMap, names, fallback) => {
+  for (const name of names) {
+    const col = colMap[normalizeImportHeader(name)];
+    if (col) return col;
+  }
+  return fallback;
+};
+
 app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
@@ -930,36 +962,32 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
     const headerRow = worksheet.getRow(1);
     const colMap = {};
     headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-      const header = cell.value?.toString().trim().toLowerCase().replace(/\s+/g, ' ') || '';
+      const header = normalizeImportHeader(cell.value);
       colMap[header] = colNumber;
     });
 
-    const getCol = (names) => {
-      for (const name of names) {
-        const key = name.toLowerCase().trim().replace(/\s+/g, ' ');
-        if (colMap[key]) return colMap[key];
-      }
-      return null;
-    };
+    const colAssetTag = importColumn(colMap, ['Asset Tag', 'Asset ID', 'Asset Number', 'Tag', 'Inventory Number'], 1);
+    const colCategory = importColumn(colMap, ['Category', 'Asset Type', 'Equipment Type', 'Item Type'], 2);
+    const colBrand = importColumn(colMap, ['Brand', 'Manufacturer', 'Make'], 3);
+    const colModel = importColumn(colMap, ['Model', 'Product Model'], 4);
+    const colSerial = importColumn(colMap, ['Serial Number', 'Serial No', 'Serial', 'SN'], 5);
+    const colGeneration = importColumn(colMap, ['Generation', 'Gen', 'CPU Gen', 'Processor Gen'], 6);
+    const colProcessor = importColumn(colMap, ['Processor', 'CPU', 'Chip'], 7);
+    const colRAM = importColumn(colMap, ['RAM', 'Memory', 'RAM Memory'], 8);
+    const colSSD = importColumn(colMap, ['SSD', 'Storage', 'Disk', 'Hard Disk', 'HDD'], 9);
+    const colPurchaseDate = importColumn(colMap, ['Purchase Date', 'Date Purchased', 'Acquisition Date'], 10);
+    const colPurchasePrice = importColumn(colMap, ['Purchase Price', 'Price', 'Cost', 'Value'], 11);
+    const colStatus = importColumn(colMap, ['Status', 'Asset Status'], 12);
+    const colDepartment = importColumn(colMap, ['Department', 'Dept', 'Team', 'Unit'], 13);
+    const colLocation = importColumn(colMap, ['Location', 'Office', 'Site', 'Station'], 14);
+    const colAssignedTo = importColumn(colMap, ['Assigned To', 'Assignee', 'Staff Name', 'Staff', 'Owner', 'User'], 15);
+    const colReturnedBy = importColumn(colMap, ['Returned By', 'Returner', 'Returned By Name'], 16);
+    const colReturnDate = importColumn(colMap, ['Return Date', 'Date Returned', 'Returned Date'], 17);
+    const colCondition = importColumn(colMap, ['Condition', 'Asset Condition'], 18);
 
-    const colAssetTag = getCol(['Asset Tag', 'AssetTag', 'Tag']) || 1;
-    const colCategory = getCol(['Category']) || 2;
-    const colBrand = getCol(['Brand']) || 3;
-    const colModel = getCol(['Model']) || 4;
-    const colSerial = getCol(['Serial Number', 'SerialNumber', 'Serial No', 'SN']) || 5;
-    const colGeneration = getCol(['Generation', 'Gen', 'CPU Gen', 'Processor Gen']) || 6;
-    const colProcessor = getCol(['Processor', 'CPU', 'Cpu', 'Chip']) || 7;
-    const colRAM = getCol(['RAM', 'Memory', 'Ram Memory']) || 8;
-    const colSSD = getCol(['SSD', 'Storage', 'Disk', 'Hard Disk', 'HDD', 'Ssd']) || 9;
-    const colPurchaseDate = getCol(['Purchase Date', 'PurchaseDate', 'Date Purchased']) || 10;
-    const colPurchasePrice = getCol(['Purchase Price', 'PurchasePrice', 'Price', 'Cost']) || 11;
-    const colStatus = getCol(['Status']) || 12;
-    const colDepartment = getCol(['Department', 'Dept']) || 13;
-    const colLocation = getCol(['Location']) || 14;
-    const colAssignedTo = getCol(['Assigned To', 'AssignedTo', 'Assignee', 'Staff Name', 'Owner']) || 15;
-    const colReturnedBy = getCol(['Returned By', 'ReturnedBy', 'Returner', 'Returned By Name']) || 16;
-    const colReturnDate = getCol(['Return Date', 'ReturnDate', 'Date Returned', 'Returned Date']) || 17;
-    const colCondition = getCol(['Condition']) || 18;
+    const categoryAliases = { laptop: 'Laptops', phone: 'Mobile Phones', 'mobile phone': 'Mobile Phones', monitor: 'Monitors', projector: 'Projectors', printer: 'Printers', copier: 'Copiers', tablet: 'Tablets', tv: 'TV', router: 'Network Devices', switch: 'Network Devices' };
+    const statusAliases = { available: 'Available', assigned: 'Assigned', issued: 'Assigned', stored: 'In Storage', storage: 'In Storage', repair: 'Under Repair', faulty: 'Under Repair', lost: 'Lost', disposed: 'Disposed', disposal: 'Aproved for disposal', approved: 'Aproved for disposal' };
+    const conditionAliases = { new: 'New', good: 'Good', ok: 'Good', faulty: 'Faulty', damaged: 'Damaged', ber: 'BER' };
 
     worksheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return;
@@ -996,7 +1024,7 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
 
         const assetData = {
           assetTag: row.getCell(colAssetTag).value?.toString().toUpperCase().trim(),
-          category: row.getCell(colCategory).value?.toString().trim(),
+          category: normalizeImportValue(row.getCell(colCategory).value, ["Laptops", "Mobile Phones", "Monitors", "Projectors", "TV", "Printers", "Copiers", "Network Devices", "Tablets"], categoryAliases),
           brand: row.getCell(colBrand).value?.toString().trim(),
           model: row.getCell(colModel).value?.toString().trim(),
           serialNumber: row.getCell(colSerial).value?.toString().trim(),
@@ -1006,11 +1034,11 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
           ssd: row.getCell(colSSD).value?.toString().trim(),
           purchaseDate: purchaseDate,
           purchasePrice: purchasePrice,
-          status: row.getCell(colStatus).value?.toString().trim() || "Available",
+          status: normalizeImportValue(row.getCell(colStatus).value, ["Available", "Assigned", "In Storage", "Under Repair", "Lost", "Aproved for disposal", "Disposed"], statusAliases) || "Available",
           department: row.getCell(colDepartment).value?.toString().trim(),
           location: row.getCell(colLocation).value?.toString().trim(),
           assignedTo: row.getCell(colAssignedTo).value?.toString().trim(),
-          condition: row.getCell(colCondition).value?.toString().trim() || "Good",
+          condition: normalizeImportValue(row.getCell(colCondition).value, ["New", "Good", "Faulty", "BER", "Damaged"], conditionAliases) || "Good",
         };
 
         const returnedByVal = row.getCell(colReturnedBy).value?.toString().trim();
@@ -1081,6 +1109,84 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
   } catch (err) {
     console.error("Import Error:", err);
     res.status(500).json({ message: err.message || "Import failed" });
+  }
+});
+
+/* =========================
+   IMPORT IMAGE WITH OCR
+========================= */
+app.post("/api/import/image", auth, adminOnly, imageUpload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: "No image uploaded" });
+
+  let worker;
+  try {
+    worker = await createWorker("eng");
+    const { data } = await worker.recognize(req.file.buffer);
+    const lines = data.text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const assets = [];
+    const errors = [];
+    const categories = ["Laptops", "Mobile Phones", "Monitors", "Projectors", "TV", "Printers", "Copiers", "Network Devices", "Tablets"];
+    const categoryPattern = new RegExp(categories.map(value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "i");
+
+    lines.forEach((line, index) => {
+      const columns = line.split(/\t+|\s{2,}|\|/).map(value => value.trim()).filter(Boolean);
+      if (columns.length < 2) return;
+
+      const categoryMatch = line.match(categoryPattern);
+      const assetTag = columns.find(value => /[A-Z]*[-/]?\d{3,}/i.test(value));
+      if (!assetTag || !categoryMatch) {
+        errors.push(`OCR line ${index + 1}: Could not confidently identify an asset tag and category`);
+        return;
+      }
+
+      const category = normalizeImportValue(categoryMatch[0], categories, {
+        laptop: "Laptops", phone: "Mobile Phones", monitor: "Monitors", projector: "Projectors",
+        printer: "Printers", copier: "Copiers", tablet: "Tablets", tv: "TV"
+      });
+      const tagIndex = columns.indexOf(assetTag);
+      const categoryIndex = columns.findIndex(value => value.toLowerCase().includes(categoryMatch[0].toLowerCase()));
+      const remaining = columns.filter((_, columnIndex) => columnIndex !== tagIndex && columnIndex !== categoryIndex);
+
+      assets.push({
+        assetTag: assetTag.toUpperCase(),
+        category,
+        brand: remaining[0],
+        model: remaining[1],
+        serialNumber: remaining[2],
+        assignedTo: remaining.find(value => /\b[A-Z][a-z]+\s+[A-Z][a-z]+\b/.test(value)),
+        status: "Available",
+        condition: "Good"
+      });
+    });
+
+    let importedCount = 0;
+    if (assets.length) {
+      try {
+        const result = await Asset.insertMany(assets, { ordered: false });
+        importedCount = result.length;
+      } catch (err) {
+        if (err.code === 11000) {
+          importedCount = err.insertedCount || 0;
+          errors.push(`${assets.length - importedCount} OCR assets had duplicate Asset Tags`);
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    res.json({
+      message: "Image scan completed",
+      importedCount,
+      errorCount: errors.length,
+      errors: errors.length ? errors : undefined,
+      extractedText: data.text,
+      totalProcessed: importedCount + errors.length
+    });
+  } catch (err) {
+    console.error("Image import error:", err);
+    res.status(500).json({ message: err.message || "Image scan failed" });
+  } finally {
+    if (worker) await worker.terminate();
   }
 });
 
