@@ -706,6 +706,7 @@ const assetSchema = new mongoose.Schema({
       "IT",
       "Communications",
       "Programs",
+      "KE/Programs",
       "CASCADE",
       "Women Voices and Leadership (WVL)",
       "KRAPID+",
