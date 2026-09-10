@@ -1127,10 +1127,44 @@ app.post("/api/import/image", auth, adminOnly, imageUpload.single("file"), async
     const errors = [];
     const categories = ["Laptops", "Mobile Phones", "Monitors", "Projectors", "TV", "Printers", "Copiers", "Network Devices", "Tablets"];
     const categoryPattern = new RegExp(categories.map(value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "i");
+    const spreadsheetScreenshot = /laptop\s+model/i.test(data.text) && /mobile\s+phone/i.test(data.text);
 
     lines.forEach((line, index) => {
       const columns = line.split(/\t+|\s{2,}|\|/).map(value => value.trim()).filter(Boolean);
       if (columns.length < 2) return;
+
+      if (spreadsheetScreenshot) {
+        const assetTags = [...line.matchAll(/\b\d{6}\b/g)].map(match => match[0]);
+        if (!assetTags.length || !/^\d+\s+/.test(line)) return;
+
+        const nameMatch = line.match(/^\d+\s+([A-Za-z][A-Za-z'-]+\s+[A-Za-z][A-Za-z'-]+)/);
+        const assignedTo = nameMatch ? nameMatch[1] : undefined;
+        const laptopModelMatch = line.match(/\b(Dell|HP|Lenovo|Acer|Apple|Asus|Microsoft)\s+([A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)?)/i);
+        const phoneMatch = line.match(/\b(Samsung|Oppo|Apple|Tecno|Infinix|Nokia|Huawei)\s*([A-Za-z0-9-]*)/i);
+
+        assets.push({
+          assetTag: assetTags[0],
+          category: "Laptops",
+          brand: laptopModelMatch ? laptopModelMatch[1] : undefined,
+          model: laptopModelMatch ? laptopModelMatch[2] : undefined,
+          assignedTo,
+          status: "Assigned",
+          condition: "Good"
+        });
+
+        if (assetTags[1]) {
+          assets.push({
+            assetTag: assetTags[1],
+            category: "Mobile Phones",
+            brand: phoneMatch ? phoneMatch[1] : undefined,
+            model: phoneMatch ? phoneMatch[2] || undefined : undefined,
+            assignedTo,
+            status: "Assigned",
+            condition: "Good"
+          });
+        }
+        return;
+      }
 
       const categoryMatch = line.match(categoryPattern);
       const assetTag = columns.find(value => /[A-Z]*[-/]?\d{3,}/i.test(value));
