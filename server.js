@@ -944,6 +944,8 @@ const importColumn = (colMap, names, fallback) => {
   return fallback;
 };
 
+const generateImportIdentifier = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+
 app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
@@ -1014,6 +1016,7 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
             const digits = value.replace(/[^0-9]/g, '');
             return digits ? digits.padStart(6, '0').toUpperCase() : value.toUpperCase();
           };
+          const optionalText = value => value && !/^(n\/a|not\s*visible|none|-)$/i.test(value) ? value : undefined;
           const normalizeLocation = value => {
             if (!value) return undefined;
             if (/^kisumu\b/i.test(value)) return "Kisumu";
@@ -1030,11 +1033,18 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
             condition: normalizeImportValue(cellText(colCondition), ["New", "Good", "Faulty", "BER", "Damaged"], conditionAliases) || "Good"
           };
           const devices = [
-            { tag: normalizeAssetTag(cellText(colLaptopTag)), category: "Laptops", model: cellText(colLaptopModel), serialNumber: cellText(colLaptopSerial) },
-            { tag: normalizeAssetTag(cellText(colPhoneTag)), category: "Mobile Phones", model: cellText(colPhoneModel), serialNumber: cellText(colPhoneSerial) }
+            { tag: normalizeAssetTag(cellText(colLaptopTag)), category: "Laptops", model: optionalText(cellText(colLaptopModel)), serialNumber: optionalText(cellText(colLaptopSerial)) },
+            { tag: normalizeAssetTag(cellText(colPhoneTag)), category: "Mobile Phones", model: optionalText(cellText(colPhoneModel)), serialNumber: optionalText(cellText(colPhoneSerial)) }
           ];
           devices.forEach(device => {
-            if (device.tag) assets.push({ ...common, ...device, assetTag: device.tag });
+            if (device.tag || device.model || device.serialNumber) {
+              assets.push({
+                ...common,
+                ...device,
+                assetTag: device.tag || generateImportIdentifier("AUTO-TAG"),
+                serialNumber: device.serialNumber || generateImportIdentifier("AUTO-SERIAL")
+              });
+            }
           });
           return;
         }
