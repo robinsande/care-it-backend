@@ -984,6 +984,13 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
     const colReturnedBy = importColumn(colMap, ['Returned By', 'Returner', 'Returned By Name'], 16);
     const colReturnDate = importColumn(colMap, ['Return Date', 'Date Returned', 'Returned Date'], 17);
     const colCondition = importColumn(colMap, ['Condition', 'Asset Condition'], 18);
+    const colLaptopModel = importColumn(colMap, ['Laptop Model'], null);
+    const colLaptopSerial = importColumn(colMap, ['Laptop Serial No', 'Laptop Serial Number'], null);
+    const colLaptopTag = importColumn(colMap, ['Laptop Asset Tag No', 'Laptop Asset Tag'], null);
+    const colPhoneModel = importColumn(colMap, ['Mobile Phone', 'Mobile Phone Model', 'Phone Model'], null);
+    const colPhoneSerial = importColumn(colMap, ['Mobile No', 'Mobile Phone No', 'Phone Number'], null);
+    const colPhoneTag = importColumn(colMap, ['Mobile Phone Asset Tag No', 'Mobile Phone Asset Tag', 'Phone Asset Tag'], null);
+    const hasSeparateDeviceColumns = Boolean(colLaptopTag && colPhoneTag && (colLaptopModel || colPhoneModel));
 
     const categoryAliases = { laptop: 'Laptops', phone: 'Mobile Phones', 'mobile phone': 'Mobile Phones', monitor: 'Monitors', projector: 'Projectors', printer: 'Printers', copier: 'Copiers', tablet: 'Tablets', tv: 'TV', router: 'Network Devices', switch: 'Network Devices' };
     const statusAliases = { available: 'Available', assigned: 'Assigned', issued: 'Assigned', stored: 'In Storage', storage: 'In Storage', repair: 'Under Repair', faulty: 'Under Repair', lost: 'Lost', disposed: 'Disposed', disposal: 'Aproved for disposal', approved: 'Aproved for disposal' };
@@ -993,6 +1000,31 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
       if (rowNumber === 1) return;
 
       try {
+        if (hasSeparateDeviceColumns) {
+          const cellText = column => column ? row.getCell(column).value?.toString().trim() : undefined;
+          const normalizeAssetTag = value => {
+            if (!value || /not\s*visible|n\/a|none/i.test(value)) return undefined;
+            const digits = value.replace(/[^0-9]/g, '');
+            return digits ? digits.padStart(6, '0').toUpperCase() : value.toUpperCase();
+          };
+          const assignedTo = cellText(colAssignedTo);
+          const common = {
+            assignedTo,
+            department: cellText(colDepartment),
+            location: cellText(colLocation),
+            status: assignedTo ? "Assigned" : "Available",
+            condition: normalizeImportValue(cellText(colCondition), ["New", "Good", "Faulty", "BER", "Damaged"], conditionAliases) || "Good"
+          };
+          const devices = [
+            { tag: normalizeAssetTag(cellText(colLaptopTag)), category: "Laptops", model: cellText(colLaptopModel), serialNumber: cellText(colLaptopSerial) },
+            { tag: normalizeAssetTag(cellText(colPhoneTag)), category: "Mobile Phones", model: cellText(colPhoneModel), serialNumber: cellText(colPhoneSerial) }
+          ];
+          devices.forEach(device => {
+            if (device.tag) assets.push({ ...common, ...device, assetTag: device.tag });
+          });
+          return;
+        }
+
         const rawDate = row.getCell(colPurchaseDate).value;
         let purchaseDate = rawDate;
         if (rawDate instanceof Date) {
