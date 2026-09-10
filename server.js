@@ -1007,11 +1007,18 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
             const digits = value.replace(/[^0-9]/g, '');
             return digits ? digits.padStart(6, '0').toUpperCase() : value.toUpperCase();
           };
+          const normalizeLocation = value => {
+            if (!value) return undefined;
+            if (/^kisumu\b/i.test(value)) return "Kisumu";
+            if (/^migori\b/i.test(value)) return "Migori";
+            if (/^nairobi\b/i.test(value)) return "Nairobi";
+            return value;
+          };
           const assignedTo = cellText(colAssignedTo);
           const common = {
             assignedTo,
             department: cellText(colDepartment),
-            location: cellText(colLocation),
+            location: normalizeLocation(cellText(colLocation)),
             status: assignedTo ? "Assigned" : "Available",
             condition: normalizeImportValue(cellText(colCondition), ["New", "Good", "Faulty", "BER", "Damaged"], conditionAliases) || "Good"
           };
