@@ -141,6 +141,20 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 // Logger
 app.use(morgan(process.env.LOG_LEVEL || "dev"));
 
+app.use((req, res, next) => {
+  const startedAt = process.hrtime.bigint();
+  res.on("finish", () => {
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    console.info("[CareIT Perf] api", JSON.stringify({
+      method: req.method,
+      path: req.originalUrl,
+      status: res.statusCode,
+      durationMs: Math.round(durationMs)
+    }));
+  });
+  next();
+});
+
 // File Upload
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -190,6 +204,7 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ["user", "viewer", "admin", "superadmin"], default: "user" },
 }, { timestamps: true });
 
+userSchema.index({ email: 1 }, { unique: true });
 const User = mongoose.model("User", userSchema);
 
 /* =========================
@@ -203,6 +218,7 @@ const passwordResetSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now, expires: 600 } // Auto-delete after 10 minutes
 });
 
+passwordResetSchema.index({ email: 1, verified: 1, expiresAt: 1 });
 const PasswordReset = mongoose.model("PasswordReset", passwordResetSchema);
 
 /* =========================
@@ -286,6 +302,7 @@ app.post("/api/auth/register", async (req, res) => {
 
 // LOGIN
 app.post("/api/auth/login", async (req, res) => {
+  const loginStartedAt = process.hrtime.bigint();
   try {
     const { email, password } = req.body;
 
@@ -293,21 +310,35 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(400).json({ message: "Email and password required" });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = email.toLowerCase();
+    const lookupStartedAt = process.hrtime.bigint();
+    const user = await User.findOne({ email: normalizedEmail }).select("name email password role mustChangePassword").lean();
+    console.info("[CareIT Perf] login:user-lookup", JSON.stringify({
+      durationMs: Math.round(Number(process.hrtime.bigint() - lookupStartedAt) / 1e6)
+    }));
     if (!user) {
       return res.status(400).json({ message: "User not found" });
     }
 
+    const verificationStartedAt = process.hrtime.bigint();
     const match = await bcrypt.compare(password, user.password);
+    console.info("[CareIT Perf] login:password-verify", JSON.stringify({
+      durationMs: Math.round(Number(process.hrtime.bigint() - verificationStartedAt) / 1e6)
+    }));
     if (!match) {
       return res.status(400).json({ message: "Wrong password" });
     }
 
+    const tokenStartedAt = process.hrtime.bigint();
     const token = jwt.sign(
       { id: user._id, email: user.email, role: user.role },
       process.env.JWT_SECRET || "secret123",
       { expiresIn: process.env.JWT_EXPIRE || "7d" }
     );
+    console.info("[CareIT Perf] login:token-created", JSON.stringify({
+      durationMs: Math.round(Number(process.hrtime.bigint() - tokenStartedAt) / 1e6),
+      totalDurationMs: Math.round(Number(process.hrtime.bigint() - loginStartedAt) / 1e6)
+    }));
 
     res.json({
       message: "Login successful",
@@ -802,6 +833,8 @@ const assetSchema = new mongoose.Schema({
   },
 }, { timestamps: true });
 
+assetSchema.index({ createdAt: -1 });
+assetSchema.index({ status: 1, category: 1 });
 const Asset = mongoose.model("Asset", assetSchema);
 
 const returnedAssetSchema = new mongoose.Schema({
@@ -858,6 +891,18 @@ app.post("/api/assets", auth, adminOnly, async (req, res) => {
 app.get("/api/assets", auth, async (req, res) => {
   try {
     const assets = await Asset.find().sort({ createdAt: -1 });
+    res.json(assets);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/dashboard/assets", auth, async (req, res) => {
+  try {
+    const assets = await Asset.find()
+      .select("assetTag category brand model serialNumber status assignedTo department location condition generation processor ram ssd returnInfo")
+      .sort({ createdAt: -1 })
+      .lean();
     res.json(assets);
   } catch (err) {
     res.status(500).json({ message: err.message });
