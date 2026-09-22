@@ -181,17 +181,30 @@ const imageUpload = multer({
 /* =========================
    DATABASE
 ========================= */
-mongoose
-  .connect(process.env.MONGODB_URL || "mongodb://127.0.0.1:27017/care_it_asset_management-app", {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 5000,
-  })
-  .then(() => console.log("✅ MongoDB Connected"))
-  .catch((err) => {
-    console.log("❌ DB Error:", err.message);
-    process.exit(1);
-  });
+const mongoOptions = {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 5000,
+  connectTimeoutMS: 5000,
+  socketTimeoutMS: 10000,
+};
+
+async function connectDatabase() {
+  const mongoUrl = process.env.MONGODB_URL || "mongodb://127.0.0.1:27017/care_it_asset_management-app";
+
+  while (mongoose.connection.readyState !== 1) {
+    try {
+      await mongoose.connect(mongoUrl, mongoOptions);
+      console.log("✅ MongoDB Connected");
+    } catch (err) {
+      console.error("❌ DB Error:", err.message);
+      console.log("⏳ MongoDB unavailable; retrying in 3 seconds...");
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+  }
+}
+
+connectDatabase();
 
 /* =========================
    USER MODEL
@@ -304,6 +317,10 @@ app.post("/api/auth/register", async (req, res) => {
 app.post("/api/auth/login", async (req, res) => {
   const loginStartedAt = process.hrtime.bigint();
   try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ message: "Database is waking up. Please try again in a moment." });
+    }
+
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -1949,7 +1966,12 @@ app.get("/api/export/pdf", auth, async (req, res) => {
    HEALTH CHECK
 ========================= */
 app.get("/health", (req, res) => {
-  res.json({ status: "OK", timestamp: new Date().toISOString() });
+  const databaseReady = mongoose.connection.readyState === 1;
+  res.status(200).json({
+    status: "OK",
+    database: databaseReady ? "connected" : "connecting",
+    timestamp: new Date().toISOString()
+  });
 });
 
 /* =========================
