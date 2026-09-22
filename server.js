@@ -350,7 +350,7 @@ app.post("/api/auth/login", async (req, res) => {
     const token = jwt.sign(
       { id: user._id, email: user.email, role: user.role },
       process.env.JWT_SECRET || "secret123",
-      { expiresIn: process.env.JWT_EXPIRE || "7d" }
+      { expiresIn: process.env.JWT_EXPIRE || "30d" }
     );
     console.info("[CareIT Perf] login:token-created", JSON.stringify({
       durationMs: Math.round(Number(process.hrtime.bigint() - tokenStartedAt) / 1e6),
