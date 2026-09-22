@@ -310,7 +310,7 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(400).json({ message: "Email and password required" });
     }
 
-    const normalizedEmail = email.toLowerCase();
+    const normalizedEmail = String(email).trim().toLowerCase();
     const lookupStartedAt = process.hrtime.bigint();
     const user = await User.findOne({ email: normalizedEmail }).select("name email password role mustChangePassword").lean();
     console.info("[CareIT Perf] login:user-lookup", JSON.stringify({
