@@ -731,11 +731,17 @@ app.post("/api/auth/change-password", auth, async (req, res) => {
 /* =========================
    ASSET MODEL
 ========================= */
+const ASSET_CATEGORIES = [
+  "Laptops", "Mobile Phones", "Monitors", "Projectors", "TV",
+  "Printers", "Copiers", "Network Devices", "Tablets",
+  "Laptop Charger", "Toner", "Docking Station", "Keyboard Combo/Mouse"
+];
+
 const assetSchema = new mongoose.Schema({
   assetTag: { type: String, required: true, unique: true, uppercase: true },
   category: {
     type: String,
-    enum: ["Laptops", "Mobile Phones", "Monitors","Projectors","TV","Printers", "Copiers", "Network Devices", "Tablets"],
+    enum: ASSET_CATEGORIES,
     required: true,
   },
   brand: String,
@@ -897,6 +903,70 @@ const borrowedItemSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const BorrowedItem = mongoose.model("BorrowedItem", borrowedItemSchema);
+
+/* =========================
+   PURCHASE ITEM MODEL
+========================= */
+const PURCHASE_CATEGORIES = [
+  "Laptops", "Mobile Phones", "Tablets", "Printers",
+  "Copiers", "Toners", "Network Devices", "Docking Station",
+  "Keyboard Combo/Mouse", "Laptop Charger"
+];
+
+const purchaseItemSchema = new mongoose.Schema({
+  itemTag: { type: String, required: true, unique: true, uppercase: true },
+  category: {
+    type: String,
+    enum: PURCHASE_CATEGORIES,
+    required: true,
+  },
+  brand: String,
+  model: String,
+  serialNumber: String,
+  purchaseDate: { type: Date, required: true },
+  purchasePrice: Number,
+  supplier: String,
+  invoiceNumber: String,
+  quantity: { type: Number, default: 1 },
+  status: {
+    type: String,
+    enum: ["In Stock", "Assigned", "Used", "Damaged", "Disposed"],
+    default: "In Stock",
+  },
+  location: {
+    type: String,
+    enum: [
+      "Regional Office",
+      "Nairobi",
+      "Nairobi Admin Stores",
+      "Nairobi IT Stores",
+      "Nairobi Regional Stores",
+      "RMU Stores",
+      "Kisumu",
+      "Migori",
+      "Busia",
+      "Nakuru",
+      "Kajiado",
+      "Garissa",
+      "Dadaab",
+      "Dadaab-DMO",
+      "IFO",
+      "Hagadera",
+      "Dagahaley"
+    ],
+  },
+  condition: {
+    type: String,
+    enum: ["New", "Good", "Faulty", "BER", "Damaged"],
+    default: "New",
+  },
+  assignedTo: String,
+  notes: String,
+}, { timestamps: true });
+
+purchaseItemSchema.index({ createdAt: -1 });
+purchaseItemSchema.index({ category: 1, status: 1 });
+const PurchaseItem = mongoose.model("PurchaseItem", purchaseItemSchema);
 
 /* =========================
    ASSET ROUTES
@@ -1806,9 +1876,33 @@ function getAssetExportRow(asset) {
   };
 }
 
+function buildAssetFilterFromQuery(req) {
+  const filter = {};
+  const { location, status, category, condition, department } = req.query;
+  if (location) filter.location = location;
+  if (status) filter.status = status;
+  if (category) filter.category = category;
+  if (condition) filter.condition = condition;
+  if (department) filter.department = department;
+  return filter;
+}
+
+function buildExportFilename(base, req, ext) {
+  const { location, status, category, condition, department } = req.query;
+  const parts = [base];
+  if (category) parts.push(`-${category.replace(/[^a-zA-Z0-9]/g, '')}`);
+  if (department) parts.push(`-${department.replace(/[^a-zA-Z0-9]/g, '')}`);
+  if (location) parts.push(`-${location.replace(/[^a-zA-Z0-9]/g, '')}`);
+  if (status) parts.push(`-${status.replace(/[^a-zA-Z0-9]/g, '')}`);
+  if (condition) parts.push(`-${condition.replace(/[^a-zA-Z0-9]/g, '')}`);
+  parts.push(`-${new Date().toISOString().slice(0, 10)}`);
+  return `${parts.join('')}.${ext}`;
+}
+
 app.get("/api/export/excel", auth, async (req, res) => {
   try {
-    const assets = await Asset.find();
+    const filter = buildAssetFilterFromQuery(req);
+    const assets = await Asset.find(filter);
 
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("Assets Report");
@@ -1867,7 +1961,7 @@ app.get("/api/export/excel", auth, async (req, res) => {
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
-    res.setHeader("Content-Disposition", "attachment; filename=assets.xlsx");
+    res.setHeader("Content-Disposition", `attachment; filename=${buildExportFilename('assets', req, 'xlsx')}`);
 
     await workbook.xlsx.write(res);
     res.end();
@@ -1881,7 +1975,8 @@ app.get("/api/export/excel", auth, async (req, res) => {
 ========================= */
 app.get("/api/export/pdf", auth, async (req, res) => {
   try {
-    const assets = await Asset.find();
+    const filter = buildAssetFilterFromQuery(req);
+    const assets = await Asset.find(filter);
 
     const doc = new PDFDocument({
       layout: "landscape",
@@ -1891,7 +1986,7 @@ app.get("/api/export/pdf", auth, async (req, res) => {
     });
 
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", "attachment; filename=assets.pdf");
+    res.setHeader("Content-Disposition", `attachment; filename=${buildExportFilename('assets', req, 'pdf')}`);
 
     doc.pipe(res);
 
@@ -1931,6 +2026,12 @@ app.get("/api/export/pdf", auth, async (req, res) => {
 
     doc.font("Times-Bold").fontSize(16).fillColor("#1F2937").text("CARE IT ASSET REPORT", { align: "center" });
     doc.font("Times-Roman").fontSize(9).fillColor("#4B5563").text(`Generated: ${new Date().toLocaleDateString()}`, { align: "center" });
+    const filterParts = [];
+    if (req.query.category) filterParts.push(`Category: ${req.query.category}`);
+    if (req.query.location) filterParts.push(`Location: ${req.query.location}`);
+    if (req.query.status) filterParts.push(`Status: ${req.query.status}`);
+    if (req.query.condition) filterParts.push(`Condition: ${req.query.condition}`);
+    if (filterParts.length) doc.font("Times-Roman").fontSize(9).fillColor("#2F5496").text(filterParts.join("  |  "), { align: "center" });
     doc.moveDown(0.8);
     drawTableHeader();
 
@@ -1965,6 +2066,374 @@ app.get("/api/export/pdf", auth, async (req, res) => {
     });
 
     doc.end();
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* =========================
+   PURCHASE ITEM ROUTES
+========================= */
+const PURCHASE_EXPORT_COLUMNS = [
+  { header: "Item Tag", key: "itemTag", width: 20 },
+  { header: "Category", key: "category", width: 22 },
+  { header: "Brand", key: "brand", width: 15 },
+  { header: "Model", key: "model", width: 20 },
+  { header: "Serial Number", key: "serialNumber", width: 25 },
+  { header: "Purchase Date", key: "purchaseDate", width: 15 },
+  { header: "Purchase Price", key: "purchasePrice", width: 15 },
+  { header: "Supplier", key: "supplier", width: 20 },
+  { header: "Invoice Number", key: "invoiceNumber", width: 18 },
+  { header: "Quantity", key: "quantity", width: 10 },
+  { header: "Status", key: "status", width: 15 },
+  { header: "Location", key: "location", width: 25 },
+  { header: "Condition", key: "condition", width: 15 },
+  { header: "Assigned To", key: "assignedTo", width: 28 },
+  { header: "Notes", key: "notes", width: 30 },
+];
+
+function getPurchaseExportRow(item) {
+  return {
+    itemTag: item.itemTag,
+    category: item.category,
+    brand: item.brand || "",
+    model: item.model || "",
+    serialNumber: item.serialNumber || "",
+    purchaseDate: item.purchaseDate,
+    purchasePrice: item.purchasePrice,
+    supplier: item.supplier || "",
+    invoiceNumber: item.invoiceNumber || "",
+    quantity: item.quantity || 1,
+    status: item.status,
+    location: item.location || "",
+    condition: item.condition,
+    assignedTo: item.assignedTo || "",
+    notes: item.notes || "",
+  };
+}
+
+app.get("/api/purchase-items", auth, async (req, res) => {
+  try {
+    const filter = {};
+    const { location, status, category, condition } = req.query;
+    if (location) filter.location = location;
+    if (status) filter.status = status;
+    if (category) filter.category = category;
+    if (condition) filter.condition = condition;
+    const items = await PurchaseItem.find(filter).sort({ createdAt: -1 });
+    res.json(items);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/purchase-items/categories", auth, (req, res) => {
+  res.json({ categories: PURCHASE_CATEGORIES });
+});
+
+app.get("/api/purchase-items/:id", auth, async (req, res) => {
+  try {
+    const item = await PurchaseItem.findById(req.params.id);
+    if (!item) return res.status(404).json({ message: "Purchase item not found" });
+    res.json(item);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.post("/api/purchase-items", auth, adminOnly, async (req, res) => {
+  try {
+    const item = await PurchaseItem.create(req.body);
+    res.status(201).json({ message: "Purchase item created", item });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.put("/api/purchase-items/:id", auth, adminOnly, async (req, res) => {
+  try {
+    const item = await PurchaseItem.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    if (!item) return res.status(404).json({ message: "Purchase item not found" });
+    res.json({ message: "Purchase item updated", item });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.delete("/api/purchase-items/:id", auth, adminOnly, async (req, res) => {
+  try {
+    const item = await PurchaseItem.findByIdAndDelete(req.params.id);
+    if (!item) return res.status(404).json({ message: "Purchase item not found" });
+    res.json({ message: "Purchase item deleted", item });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/purchase-export/excel", auth, async (req, res) => {
+  try {
+    const filter = {};
+    const { location, status, category, condition } = req.query;
+    if (location) filter.location = location;
+    if (status) filter.status = status;
+    if (category) filter.category = category;
+    if (condition) filter.condition = condition;
+    const items = await PurchaseItem.find(filter);
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Purchase Items");
+    sheet.columns = PURCHASE_EXPORT_COLUMNS;
+    items.forEach((item) => sheet.addRow(getPurchaseExportRow(item)));
+
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" }, name: "Times New Roman" };
+    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF2F5496" } };
+    headerRow.height = 28;
+    headerRow.alignment = { vertical: "middle" };
+
+    sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      row.font = { name: "Times New Roman" };
+      if (rowNumber > 1) {
+        row.alignment = { vertical: "middle" };
+        if (rowNumber % 2 === 0) row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD6E4F0" } };
+        else row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFB8CCE4" } };
+      }
+    });
+
+    sheet.eachRow((row) => {
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        cell.border = {
+          top: { style: "thin", color: { argb: "FF95B3D7" } },
+          left: { style: "thin", color: { argb: "FF95B3D7" } },
+          bottom: { style: "thin", color: { argb: "FF95B3D7" } },
+          right: { style: "thin", color: { argb: "FF95B3D7" } },
+        };
+      });
+    });
+
+    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: sheet.columns.length } };
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename=${buildExportFilename('purchase-items', req, 'xlsx')}`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/purchase-export/pdf", auth, async (req, res) => {
+  try {
+    const filter = {};
+    const { location, status, category, condition } = req.query;
+    if (location) filter.location = location;
+    if (status) filter.status = status;
+    if (category) filter.category = category;
+    if (condition) filter.condition = condition;
+    const items = await PurchaseItem.find(filter);
+
+    const doc = new PDFDocument({
+      layout: "landscape",
+      size: "LEGAL",
+      margins: { top: 28, bottom: 28, left: 24, right: 24 },
+      bufferPages: true,
+    });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename=${buildExportFilename('purchase-items', req, 'pdf')}`);
+    doc.pipe(res);
+
+    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const pageBottom = doc.page.height - doc.page.margins.bottom;
+    const totalColumnWidth = PURCHASE_EXPORT_COLUMNS.reduce((sum, column) => sum + column.width, 0);
+    const columnWidths = PURCHASE_EXPORT_COLUMNS.map((column) => pageWidth * column.width / totalColumnWidth);
+    const rowData = items.map(getPurchaseExportRow);
+    const headerHeight = 24;
+    const fontSize = 6.5;
+
+    const formatPdfValue = (value, key) => {
+      if (value == null || value === "") return "";
+      if (key === "purchaseDate") return new Date(value).toLocaleDateString();
+      if (key === "purchasePrice") return Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return String(value);
+    };
+
+    const drawTableHeader = () => {
+      const headerTop = doc.y;
+      let x = doc.page.margins.left;
+      doc.font("Times-Bold").fontSize(fontSize).fillColor("#FFFFFF");
+      PURCHASE_EXPORT_COLUMNS.forEach((column, index) => {
+        const width = columnWidths[index];
+        doc.save().rect(x, headerTop, width, headerHeight).fill("#2F5496").restore();
+        doc.fillColor("#FFFFFF").text(column.header, x + 3, headerTop + 7, { width: width - 6, height: headerHeight - 6, ellipsis: true, lineBreak: false });
+        doc.rect(x, headerTop, width, headerHeight).stroke("#95B3D7");
+        x += width;
+      });
+      doc.y = headerTop + headerHeight;
+    };
+
+    doc.font("Times-Bold").fontSize(16).fillColor("#1F2937").text("CARE IT PURCHASE ITEMS REPORT", { align: "center" });
+    doc.font("Times-Roman").fontSize(9).fillColor("#4B5563").text(`Generated: ${new Date().toLocaleDateString()}`, { align: "center" });
+    const pFilterParts = [];
+    if (category) pFilterParts.push(`Category: ${category}`);
+    if (location) pFilterParts.push(`Location: ${location}`);
+    if (status) pFilterParts.push(`Status: ${status}`);
+    if (condition) pFilterParts.push(`Condition: ${condition}`);
+    if (pFilterParts.length) doc.font("Times-Roman").fontSize(9).fillColor("#2F5496").text(pFilterParts.join("  |  "), { align: "center" });
+    doc.moveDown(0.8);
+    drawTableHeader();
+
+    rowData.forEach((row, rowIndex) => {
+      if (doc.y + 24 > pageBottom) {
+        doc.addPage();
+        drawTableHeader();
+      }
+      const rowTop = doc.y;
+      const cellHeights = PURCHASE_EXPORT_COLUMNS.map((column, index) => doc.heightOfString(formatPdfValue(row[column.key], column.key), { width: columnWidths[index] - 6, lineGap: 0 }));
+      const rowHeight = Math.max(20, Math.min(52, Math.max(...cellHeights) + 7));
+      let x = doc.page.margins.left;
+      PURCHASE_EXPORT_COLUMNS.forEach((column, columnIndex) => {
+        const width = columnWidths[columnIndex];
+        const fill = rowIndex % 2 === 0 ? "#D6E4F0" : "#B8CCE4";
+        doc.save().rect(x, rowTop, width, rowHeight).fill(fill).restore();
+        doc.font("Times-Roman").fontSize(fontSize).fillColor("#1F2937").text(formatPdfValue(row[column.key], column.key), x + 3, rowTop + 3, { width: width - 6, height: rowHeight - 6, ellipsis: true, lineGap: 0 });
+        doc.rect(x, rowTop, width, rowHeight).stroke("#95B3D7");
+        x += width;
+      });
+      doc.y = rowTop + rowHeight;
+    });
+
+    doc.end();
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.post("/api/purchase-import/excel", auth, adminOnly, upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(req.file.buffer);
+    const worksheet = workbook.worksheets[0];
+    const items = [];
+    const errors = [];
+    let importedCount = 0;
+
+    let headerRowNumber = 1;
+    worksheet.eachRow((row, rowNumber) => {
+      const rowHeaders = row.values.map(value => normalizeImportHeader(value)).filter(Boolean);
+      if (rowHeaders.includes('item tag') || rowHeaders.includes('category') || rowHeaders.includes('serial number')) {
+        headerRowNumber = rowNumber;
+      }
+    });
+    const headerRow = worksheet.getRow(headerRowNumber);
+    const colMap = {};
+    headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const header = normalizeImportHeader(cell.value);
+      colMap[header] = colNumber;
+    });
+
+    const colItemTag = importColumn(colMap, ['Item Tag', 'Item ID', 'Asset Tag', 'Tag', 'Inventory Number'], 1);
+    const colCategory = importColumn(colMap, ['Category', 'Item Type', 'Equipment Type'], 2);
+    const colBrand = importColumn(colMap, ['Brand', 'Manufacturer', 'Make'], 3);
+    const colModel = importColumn(colMap, ['Model', 'Product Model'], 4);
+    const colSerial = importColumn(colMap, ['Serial Number', 'Serial No', 'Serial', 'SN'], 5);
+    const colPurchaseDate = importColumn(colMap, ['Purchase Date', 'Date Purchased', 'Acquisition Date'], 6);
+    const colPurchasePrice = importColumn(colMap, ['Purchase Price', 'Price', 'Cost', 'Value'], 7);
+    const colSupplier = importColumn(colMap, ['Supplier', 'Vendor'], 8);
+    const colInvoice = importColumn(colMap, ['Invoice Number', 'Invoice No', 'Invoice'], 9);
+    const colQuantity = importColumn(colMap, ['Quantity', 'Qty'], 10);
+    const colStatus = importColumn(colMap, ['Status', 'Item Status'], 11);
+    const colLocation = importColumn(colMap, ['Location', 'Office', 'Site', 'Station'], 12);
+    const colCondition = importColumn(colMap, ['Condition', 'Item Condition'], 13);
+    const colAssignedTo = importColumn(colMap, ['Assigned To', 'Assignee', 'Staff Name', 'Owner', 'User'], 14);
+    const colNotes = importColumn(colMap, ['Notes', 'Remarks', 'Comments'], 15);
+
+    const categoryAliases = { charger: 'Laptop Charger', 'laptop charger': 'Laptop Charger', phone: 'Mobile Phones', 'mobile phone': 'Mobile Phones', tablet: 'Tablets', printer: 'Printers', toner: 'Toner', 'docking station': 'Docking Station', dock: 'Docking Station', 'keyboard': 'Keyboard Combo/Mouse', 'keyboard mouse': 'Keyboard Combo/Mouse', 'combo': 'Keyboard Combo/Mouse' };
+    const statusAliases = { stock: 'In Stock', 'in stock': 'In Stock', assigned: 'Assigned', used: 'Used', damaged: 'Damaged', disposed: 'Disposed' };
+    const conditionAliases = { new: 'New', good: 'Good', ok: 'Good', faulty: 'Faulty', damaged: 'Damaged', ber: 'BER' };
+
+    const parseExcelDate = (value) => {
+      if (!value) return undefined;
+      if (value instanceof Date) return value;
+      if (typeof value === 'number') return new Date(Math.round((value - 25569) * 86400 * 1000));
+      const d = new Date(value);
+      return isNaN(d.getTime()) ? undefined : d;
+    };
+
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber <= headerRowNumber) return;
+      try {
+        const cellText = (col) => {
+          const v = col ? row.getCell(col).value : undefined;
+          return v == null ? '' : String(v).toString().trim();
+        };
+        const itemTag = cellText(colItemTag).toUpperCase() || generateImportIdentifier('PUR');
+        const categoryRaw = cellText(colCategory);
+        const category = normalizeImportValue(categoryRaw, PURCHASE_CATEGORIES, categoryAliases) || 'Other';
+        const status = normalizeImportValue(cellText(colStatus), ["In Stock", "Assigned", "Used", "Damaged", "Disposed"], statusAliases) || 'In Stock';
+        const condition = normalizeImportValue(cellText(colCondition), ["New", "Good", "Faulty", "BER", "Damaged"], conditionAliases) || 'New';
+        const purchaseDate = parseExcelDate(row.getCell(colPurchaseDate)?.value);
+
+        if (!purchaseDate) {
+          errors.push(`Row ${rowNumber}: Missing or invalid Purchase Date`);
+          return;
+        }
+
+        const qtyRaw = cellText(colQuantity);
+        const quantity = qtyRaw ? Number(qtyRaw) || 1 : 1;
+        const priceRaw = cellText(colPurchasePrice);
+        const purchasePrice = priceRaw ? Number(priceRaw) : undefined;
+
+        items.push({
+          itemTag,
+          category,
+          brand: cellText(colBrand) || undefined,
+          model: cellText(colModel) || undefined,
+          serialNumber: cellText(colSerial) || undefined,
+          purchaseDate,
+          purchasePrice,
+          supplier: cellText(colSupplier) || undefined,
+          invoiceNumber: cellText(colInvoice) || undefined,
+          quantity,
+          status,
+          location: cellText(colLocation) || undefined,
+          condition,
+          assignedTo: cellText(colAssignedTo) || undefined,
+          notes: cellText(colNotes) || undefined,
+        });
+      } catch (rowErr) {
+        errors.push(`Row ${rowNumber}: ${rowErr.message}`);
+      }
+    });
+
+    if (!items.length) {
+      return res.status(400).json({ message: "No valid items to import", errors });
+    }
+
+    let duplicateCount = 0;
+    const uniqueItems = [];
+    const seenTags = new Set();
+    for (const it of items) {
+      if (seenTags.has(it.itemTag)) { duplicateCount++; continue; }
+      seenTags.add(it.itemTag);
+      uniqueItems.push(it);
+    }
+
+    try {
+      const result = await PurchaseItem.insertMany(uniqueItems, { ordered: false });
+      importedCount = result.length;
+      if (duplicateCount) errors.push(`${duplicateCount} duplicate item tags skipped (within file)`);
+    } catch (insertErr) {
+      if (insertErr.code === 11000) {
+        importedCount = insertErr.insertedDocs?.length || 0;
+        const dup = (insertErr.result?.result?.insertedCount != null) ? (uniqueItems.length - insertErr.result.result.insertedCount) : 0;
+        if (dup) errors.push(`${dup} items had duplicate Item Tags in database`);
+      } else throw insertErr;
+    }
+
+    res.json({ message: `${importedCount} purchase item(s) imported successfully`, importedCount, errors });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
