@@ -204,6 +204,7 @@ async function connectDatabase() {
     try {
       await mongoose.connect(mongoUrl, mongoOptions);
       await migrateAssetTagIndex();
+      await migratePurchaseItemFields();
       console.log("✅ MongoDB Connected");
     } catch (err) {
       if (mongoose.connection.readyState === 1) await mongoose.disconnect();
@@ -937,7 +938,6 @@ const PURCHASE_CATEGORIES = [
 ];
 
 const purchaseItemSchema = new mongoose.Schema({
-  itemTag: { type: String, required: true, unique: true, uppercase: true },
   category: {
     type: String,
     enum: PURCHASE_CATEGORIES,
@@ -948,48 +948,35 @@ const purchaseItemSchema = new mongoose.Schema({
   serialNumber: String,
   purchaseDate: { type: Date, required: true },
   purchasePrice: Number,
-  supplier: String,
-  invoiceNumber: String,
-  quantity: { type: Number, default: 1 },
-  status: {
-    type: String,
-    enum: ["In Stock", "Assigned", "Used", "Damaged", "Disposed"],
-    default: "In Stock",
-  },
-  location: {
-    type: String,
-    enum: [
-      "Regional Office",
-      "Nairobi",
-      "Nairobi Admin Stores",
-      "Nairobi IT Stores",
-      "Nairobi Regional Stores",
-      "RMU Stores",
-      "Kisumu",
-      "Migori",
-      "Busia",
-      "Nakuru",
-      "Kajiado",
-      "Garissa",
-      "Dadaab",
-      "Dadaab-DMO",
-      "IFO",
-      "Hagadera",
-      "Dagahaley"
-    ],
-  },
-  condition: {
-    type: String,
-    enum: ["New", "Good", "Faulty", "BER", "Damaged"],
-    default: "New",
-  },
-  assignedTo: String,
-  notes: String,
+  purchasedFor: String,
+  vendor: String,
+  receivedBy: String,
 }, { timestamps: true });
 
 purchaseItemSchema.index({ createdAt: -1 });
-purchaseItemSchema.index({ category: 1, status: 1 });
+purchaseItemSchema.index({ category: 1, purchaseDate: -1 });
 const PurchaseItem = mongoose.model("PurchaseItem", purchaseItemSchema);
+
+async function migratePurchaseItemFields() {
+  await PurchaseItem.createCollection().catch(error => {
+    if (error.codeName !== "NamespaceExists" && error.code !== 48) throw error;
+  });
+  const indexes = await PurchaseItem.collection.indexes();
+  const itemTagIndex = indexes.find(index => index.key.itemTag === 1 && index.unique);
+  if (itemTagIndex) await PurchaseItem.collection.dropIndex(itemTagIndex.name);
+
+  const oldCategoryStatusIndex = indexes.find(index => index.key.category === 1 && index.key.status === 1);
+  if (oldCategoryStatusIndex) await PurchaseItem.collection.dropIndex(oldCategoryStatusIndex.name);
+
+  await PurchaseItem.collection.updateMany({}, [
+    { $set: {
+      vendor: { $ifNull: ["$vendor", "$supplier"] },
+      purchasedFor: { $ifNull: ["$purchasedFor", "$assignedTo"] }
+    } },
+    { $unset: ["itemTag", "supplier", "invoiceNumber", "quantity", "status", "location", "condition", "assignedTo", "notes"] }
+  ]);
+  await PurchaseItem.collection.createIndex({ category: 1, purchaseDate: -1 });
+}
 
 /* =========================
    ASSET ROUTES
@@ -2122,51 +2109,36 @@ app.get("/api/export/pdf", auth, async (req, res) => {
    PURCHASE ITEM ROUTES
 ========================= */
 const PURCHASE_EXPORT_COLUMNS = [
-  { header: "Item Tag", key: "itemTag", width: 20 },
   { header: "Category", key: "category", width: 22 },
+  { header: "Serial Number", key: "serialNumber", width: 25 },
   { header: "Brand", key: "brand", width: 15 },
   { header: "Model", key: "model", width: 20 },
-  { header: "Serial Number", key: "serialNumber", width: 25 },
   { header: "Purchase Date", key: "purchaseDate", width: 15 },
   { header: "Purchase Price", key: "purchasePrice", width: 15 },
-  { header: "Supplier", key: "supplier", width: 20 },
-  { header: "Invoice Number", key: "invoiceNumber", width: 18 },
-  { header: "Quantity", key: "quantity", width: 10 },
-  { header: "Status", key: "status", width: 15 },
-  { header: "Location", key: "location", width: 25 },
-  { header: "Condition", key: "condition", width: 15 },
-  { header: "Assigned To", key: "assignedTo", width: 28 },
-  { header: "Notes", key: "notes", width: 30 },
+  { header: "Purchased For", key: "purchasedFor", width: 28 },
+  { header: "Vendor", key: "vendor", width: 20 },
+  { header: "Received By", key: "receivedBy", width: 28 },
 ];
 
 function getPurchaseExportRow(item) {
   return {
-    itemTag: item.itemTag,
     category: item.category,
+    serialNumber: item.serialNumber || "",
     brand: item.brand || "",
     model: item.model || "",
-    serialNumber: item.serialNumber || "",
     purchaseDate: item.purchaseDate,
     purchasePrice: item.purchasePrice,
-    supplier: item.supplier || "",
-    invoiceNumber: item.invoiceNumber || "",
-    quantity: item.quantity || 1,
-    status: item.status,
-    location: item.location || "",
-    condition: item.condition,
-    assignedTo: item.assignedTo || "",
-    notes: item.notes || "",
+    purchasedFor: item.purchasedFor || "",
+    vendor: item.vendor || "",
+    receivedBy: item.receivedBy || "",
   };
 }
 
 app.get("/api/purchase-items", auth, async (req, res) => {
   try {
     const filter = {};
-    const { location, status, category, condition } = req.query;
-    if (location) filter.location = location;
-    if (status) filter.status = status;
+    const { category } = req.query;
     if (category) filter.category = category;
-    if (condition) filter.condition = condition;
     const items = await PurchaseItem.find(filter).sort({ createdAt: -1 });
     res.json(items);
   } catch (err) {
@@ -2220,11 +2192,8 @@ app.delete("/api/purchase-items/:id", auth, adminOnly, async (req, res) => {
 app.get("/api/purchase-export/excel", auth, async (req, res) => {
   try {
     const filter = {};
-    const { location, status, category, condition } = req.query;
-    if (location) filter.location = location;
-    if (status) filter.status = status;
+    const { category } = req.query;
     if (category) filter.category = category;
-    if (condition) filter.condition = condition;
     const items = await PurchaseItem.find(filter);
 
     const workbook = new ExcelJS.Workbook();
@@ -2272,11 +2241,8 @@ app.get("/api/purchase-export/excel", auth, async (req, res) => {
 app.get("/api/purchase-export/pdf", auth, async (req, res) => {
   try {
     const filter = {};
-    const { location, status, category, condition } = req.query;
-    if (location) filter.location = location;
-    if (status) filter.status = status;
+    const { category } = req.query;
     if (category) filter.category = category;
-    if (condition) filter.condition = condition;
     const items = await PurchaseItem.find(filter);
 
     const doc = new PDFDocument({
@@ -2323,9 +2289,6 @@ app.get("/api/purchase-export/pdf", auth, async (req, res) => {
     doc.font("Times-Roman").fontSize(9).fillColor("#4B5563").text(`Generated: ${new Date().toLocaleDateString()}`, { align: "center" });
     const pFilterParts = [];
     if (category) pFilterParts.push(`Category: ${category}`);
-    if (location) pFilterParts.push(`Location: ${location}`);
-    if (status) pFilterParts.push(`Status: ${status}`);
-    if (condition) pFilterParts.push(`Condition: ${condition}`);
     if (pFilterParts.length) doc.font("Times-Roman").fontSize(9).fillColor("#2F5496").text(pFilterParts.join("  |  "), { align: "center" });
     doc.moveDown(0.8);
     drawTableHeader();
