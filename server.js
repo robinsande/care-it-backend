@@ -739,6 +739,8 @@ const ASSET_CATEGORIES = [
   "Laptop Charger", "Toner", "Docking Station", "Keyboard Combo/Mouse"
 ];
 
+const isNoAssetTag = value => /(?:^|[^A-Z0-9])NO TAG$/.test(String(value || "").trim().toUpperCase());
+
 const assetSchema = new mongoose.Schema({
   assetTag: { type: String, required: true, uppercase: true, trim: true },
   assetTagKey: { type: String, select: false },
@@ -869,7 +871,7 @@ const assetSchema = new mongoose.Schema({
 
 assetSchema.pre("validate", function () {
   this.assetTag = (this.assetTag || "").trim().toUpperCase();
-  this.assetTagKey = this.assetTag && this.assetTag !== "NO TAG" ? this.assetTag : undefined;
+  this.assetTagKey = this.assetTag && !isNoAssetTag(this.assetTag) ? this.assetTag : undefined;
 });
 
 assetSchema.index({ createdAt: -1 });
@@ -884,7 +886,7 @@ async function migrateAssetTagIndex() {
 
   await Asset.collection.updateMany({}, [
     { $set: { assetTag: { $toUpper: { $trim: { input: { $ifNull: ["$assetTag", ""] } } } } } },
-    { $set: { assetTagKey: { $cond: [{ $in: ["$assetTag", ["", "NO TAG"]] }, "$$REMOVE", "$assetTag"] } } }
+    { $set: { assetTagKey: { $cond: [{ $regexMatch: { input: "$assetTag", regex: "(?:^|[^A-Z0-9])NO TAG$" } }, "$$REMOVE", "$assetTag"] } } }
   ]);
   await Asset.collection.createIndex({ assetTagKey: 1 }, { unique: true, sparse: true });
 }
@@ -998,7 +1000,7 @@ app.post("/api/assets", auth, adminOnly, async (req, res) => {
   try {
     const assetData = { ...req.body };
     assetData.assetTag = (assetData.assetTag || "").trim().toUpperCase();
-    assetData.assetTagKey = assetData.assetTag !== "NO TAG" ? assetData.assetTag : undefined;
+    assetData.assetTagKey = !isNoAssetTag(assetData.assetTag) ? assetData.assetTag : undefined;
     const asset = await Asset.create(assetData);
     res.status(201).json({ message: "Asset created", asset });
   } catch (err) {
@@ -1069,7 +1071,7 @@ app.put("/api/assets/:id", auth, adminOnly, async (req, res) => {
     let updateData = assetData;
     if (typeof assetData.assetTag === "string") {
       assetData.assetTag = assetData.assetTag.trim().toUpperCase();
-      if (assetData.assetTag === "NO TAG") {
+      if (isNoAssetTag(assetData.assetTag)) {
         delete assetData.assetTagKey;
         updateData = { $set: assetData, $unset: { assetTagKey: 1 } };
       } else {
@@ -1314,7 +1316,7 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
       try {
         const normalizedAssets = assets.map(asset => {
           asset.assetTag = (asset.assetTag || "").trim().toUpperCase();
-          asset.assetTagKey = asset.assetTag !== "NO TAG" ? asset.assetTag : undefined;
+          asset.assetTagKey = !isNoAssetTag(asset.assetTag) ? asset.assetTag : undefined;
           return asset;
         });
         const result = await Asset.insertMany(normalizedAssets, { ordered: false });
@@ -1458,7 +1460,7 @@ app.post("/api/import/image", auth, adminOnly, imageUpload.single("file"), async
       try {
         const normalizedAssets = assets.map(asset => {
           asset.assetTag = (asset.assetTag || "").trim().toUpperCase();
-          asset.assetTagKey = asset.assetTag !== "NO TAG" ? asset.assetTag : undefined;
+          asset.assetTagKey = !isNoAssetTag(asset.assetTag) ? asset.assetTag : undefined;
           return asset;
         });
         const result = await Asset.insertMany(normalizedAssets, { ordered: false });
