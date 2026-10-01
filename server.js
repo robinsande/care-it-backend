@@ -203,8 +203,10 @@ async function connectDatabase() {
   while (mongoose.connection.readyState !== 1) {
     try {
       await mongoose.connect(mongoUrl, mongoOptions);
+      await migrateAssetTagIndex();
       console.log("✅ MongoDB Connected");
     } catch (err) {
+      if (mongoose.connection.readyState === 1) await mongoose.disconnect();
       console.error("❌ DB Error:", err.message);
       console.log("⏳ MongoDB unavailable; retrying in 3 seconds...");
       await new Promise(resolve => setTimeout(resolve, 3000));
@@ -738,7 +740,8 @@ const ASSET_CATEGORIES = [
 ];
 
 const assetSchema = new mongoose.Schema({
-  assetTag: { type: String, required: true, unique: true, uppercase: true },
+  assetTag: { type: String, required: true, uppercase: true, trim: true },
+  assetTagKey: { type: String, select: false },
   category: {
     type: String,
     enum: ASSET_CATEGORIES,
@@ -864,9 +867,27 @@ const assetSchema = new mongoose.Schema({
   },
 }, { timestamps: true });
 
+assetSchema.pre("validate", function () {
+  this.assetTag = (this.assetTag || "").trim().toUpperCase();
+  this.assetTagKey = this.assetTag && this.assetTag !== "NO TAG" ? this.assetTag : undefined;
+});
+
 assetSchema.index({ createdAt: -1 });
 assetSchema.index({ status: 1, category: 1 });
+assetSchema.index({ assetTagKey: 1 }, { unique: true, sparse: true });
 const Asset = mongoose.model("Asset", assetSchema);
+
+async function migrateAssetTagIndex() {
+  const indexes = await Asset.collection.indexes();
+  const oldUniqueTagIndex = indexes.find(index => index.key.assetTag === 1 && index.unique);
+  if (oldUniqueTagIndex) await Asset.collection.dropIndex(oldUniqueTagIndex.name);
+
+  await Asset.collection.updateMany({}, [
+    { $set: { assetTag: { $toUpper: { $trim: { input: { $ifNull: ["$assetTag", ""] } } } } } },
+    { $set: { assetTagKey: { $cond: [{ $in: ["$assetTag", ["", "NO TAG"]] }, "$$REMOVE", "$assetTag"] } } }
+  ]);
+  await Asset.collection.createIndex({ assetTagKey: 1 }, { unique: true, sparse: true });
+}
 
 const returnedAssetSchema = new mongoose.Schema({
   description: { type: String, required: true },
@@ -975,7 +996,10 @@ const PurchaseItem = mongoose.model("PurchaseItem", purchaseItemSchema);
 // CREATE (Admin only)
 app.post("/api/assets", auth, adminOnly, async (req, res) => {
   try {
-    const asset = await Asset.create(req.body);
+    const assetData = { ...req.body };
+    assetData.assetTag = (assetData.assetTag || "").trim().toUpperCase();
+    assetData.assetTagKey = assetData.assetTag !== "NO TAG" ? assetData.assetTag : undefined;
+    const asset = await Asset.create(assetData);
     res.status(201).json({ message: "Asset created", asset });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -1041,7 +1065,18 @@ app.get("/api/assets/search/:query", auth, async (req, res) => {
 // UPDATE (Admin only)
 app.put("/api/assets/:id", auth, adminOnly, async (req, res) => {
   try {
-    const asset = await Asset.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    const assetData = { ...req.body };
+    let updateData = assetData;
+    if (typeof assetData.assetTag === "string") {
+      assetData.assetTag = assetData.assetTag.trim().toUpperCase();
+      if (assetData.assetTag === "NO TAG") {
+        delete assetData.assetTagKey;
+        updateData = { $set: assetData, $unset: { assetTagKey: 1 } };
+      } else {
+        assetData.assetTagKey = assetData.assetTag;
+      }
+    }
+    const asset = await Asset.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true });
     if (!asset) return res.status(404).json({ message: "Asset not found" });
     res.json({ message: "Asset updated", asset });
   } catch (err) {
@@ -1277,7 +1312,12 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
     // Insert assets into database
     if (assets.length > 0) {
       try {
-        const result = await Asset.insertMany(assets, { ordered: false });
+        const normalizedAssets = assets.map(asset => {
+          asset.assetTag = (asset.assetTag || "").trim().toUpperCase();
+          asset.assetTagKey = asset.assetTag !== "NO TAG" ? asset.assetTag : undefined;
+          return asset;
+        });
+        const result = await Asset.insertMany(normalizedAssets, { ordered: false });
         importedCount = result.length;
         console.log(`Successfully inserted ${importedCount} assets`);
       } catch (err) {
@@ -1416,7 +1456,12 @@ app.post("/api/import/image", auth, adminOnly, imageUpload.single("file"), async
     let importedCount = 0;
     if (assets.length) {
       try {
-        const result = await Asset.insertMany(assets, { ordered: false });
+        const normalizedAssets = assets.map(asset => {
+          asset.assetTag = (asset.assetTag || "").trim().toUpperCase();
+          asset.assetTagKey = asset.assetTag !== "NO TAG" ? asset.assetTag : undefined;
+          return asset;
+        });
+        const result = await Asset.insertMany(normalizedAssets, { ordered: false });
         importedCount = result.length;
       } catch (err) {
         if (err.code === 11000) {
