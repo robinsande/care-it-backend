@@ -231,6 +231,22 @@ const userSchema = new mongoose.Schema({
 userSchema.index({ email: 1 }, { unique: true });
 const User = mongoose.model("User", userSchema);
 
+const activityLogSchema = new mongoose.Schema({
+  actorId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  actorEmail: { type: String, required: true },
+  actorRole: { type: String, required: true },
+  action: { type: String, required: true },
+  entityType: { type: String, required: true },
+  entityId: String,
+  entityLabel: String,
+  category: String,
+  details: String,
+}, { timestamps: true });
+
+activityLogSchema.index({ createdAt: -1 });
+activityLogSchema.index({ actorId: 1, createdAt: -1 });
+const ActivityLog = mongoose.model("ActivityLog", activityLogSchema);
+
 /* =========================
    PASSWORD RESET MODEL
 ========================= */
@@ -279,12 +295,39 @@ const canAddAssets = (req, res, next) => {
   next();
 };
 
+const recordActivity = async (req, event) => {
+  try {
+    await ActivityLog.create({
+      actorId: req.user?.id,
+      actorEmail: req.user?.email || "unknown",
+      actorRole: req.user?.role || "unknown",
+      ...event,
+    });
+  } catch (err) {
+    console.error("Activity log write failed:", err.message);
+  }
+};
+
 const superAdminOnly = (req, res, next) => {
   if (!req.user || req.user.role !== "superadmin") {
     return res.status(403).json({ message: "Super admin access required" });
   }
   next();
 };
+
+app.get("/api/activity-logs", auth, adminOnly, async (req, res) => {
+  try {
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 200) : 100;
+    const logs = await ActivityLog.find()
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+    res.json(logs);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
 /* =========================
    AUTH ROUTES
@@ -484,6 +527,13 @@ app.post("/api/users", auth, adminOnly, async (req, res) => {
     });
 
     await user.save();
+    await recordActivity(req, {
+      action: "Created user",
+      entityType: "User",
+      entityId: user._id.toString(),
+      entityLabel: user.email,
+      details: `Role: ${user.role}`,
+    });
     res.status(201).json({
       message: "User created successfully",
       user: { id: user._id, name: user.name, email: user.email, role: user.role }
@@ -515,6 +565,13 @@ app.put("/api/users/:id", auth, adminOnly, async (req, res) => {
 
     targetUser.role = selectedRole;
     await targetUser.save();
+    await recordActivity(req, {
+      action: "Changed user role",
+      entityType: "User",
+      entityId: targetUser._id.toString(),
+      entityLabel: targetUser.email,
+      details: `Role: ${selectedRole}`,
+    });
 
     res.json({
       message: "User role updated successfully",
@@ -540,6 +597,12 @@ app.post("/api/users/:id/reset-password", auth, adminOnly, async (req, res) => {
     targetUser.password = await bcrypt.hash(temporaryPassword, parseInt(process.env.BCRYPT_ROUNDS || 10));
     targetUser.mustChangePassword = true;
     await targetUser.save();
+    await recordActivity(req, {
+      action: "Reset user password",
+      entityType: "User",
+      entityId: targetUser._id.toString(),
+      entityLabel: targetUser.email,
+    });
 
     res.json({
       message: "Temporary password generated successfully",
@@ -562,7 +625,15 @@ app.delete("/api/users/:id", auth, adminOnly, async (req, res) => {
       return res.status(403).json({ message: "Only the super admin can delete a super admin" });
     }
 
+    const deletedUser = { id: targetUser._id.toString(), email: targetUser.email, role: targetUser.role };
     await targetUser.deleteOne();
+    await recordActivity(req, {
+      action: "Deleted user",
+      entityType: "User",
+      entityId: deletedUser.id,
+      entityLabel: deletedUser.email,
+      details: `Role: ${deletedUser.role}`,
+    });
     res.json({ message: "User deleted successfully" });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -997,6 +1068,14 @@ app.post("/api/assets", auth, canAddAssets, async (req, res) => {
     assetData.assetTag = (assetData.assetTag || "").trim().toUpperCase();
     assetData.assetTagKey = !isNoAssetTag(assetData.assetTag) ? assetData.assetTag : undefined;
     const asset = await Asset.create(assetData);
+    await recordActivity(req, {
+      action: "Added asset",
+      entityType: "Asset",
+      entityId: asset._id.toString(),
+      entityLabel: asset.assetTag,
+      category: asset.category,
+      details: [asset.brand, asset.model].filter(Boolean).join(" "),
+    });
     res.status(201).json({ message: "Asset created", asset });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -1075,6 +1154,13 @@ app.put("/api/assets/:id", auth, adminOnly, async (req, res) => {
     }
     const asset = await Asset.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true });
     if (!asset) return res.status(404).json({ message: "Asset not found" });
+    await recordActivity(req, {
+      action: "Updated asset",
+      entityType: "Asset",
+      entityId: asset._id.toString(),
+      entityLabel: asset.assetTag,
+      category: asset.category,
+    });
     res.json({ message: "Asset updated", asset });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -1086,6 +1172,13 @@ app.delete("/api/assets/:id", auth, adminOnly, async (req, res) => {
   try {
     const asset = await Asset.findByIdAndDelete(req.params.id);
     if (!asset) return res.status(404).json({ message: "Asset not found" });
+    await recordActivity(req, {
+      action: "Deleted asset",
+      entityType: "Asset",
+      entityId: asset._id.toString(),
+      entityLabel: asset.assetTag,
+      category: asset.category,
+    });
     res.json({ message: "Asset deleted", asset });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -1332,6 +1425,16 @@ app.post("/api/import/excel", auth, adminOnly, upload.single("file"), async (req
       }
     }
 
+    if (importedCount > 0) {
+      await recordActivity(req, {
+        action: "Imported assets",
+        entityType: "Asset",
+        entityLabel: `${importedCount} assets`,
+        category: [...new Set(assets.map(asset => asset.category).filter(Boolean))].join(", "),
+        details: "Excel import",
+      });
+    }
+
     res.json({
       message: "Import completed",
       importedCount,
@@ -1470,6 +1573,16 @@ app.post("/api/import/image", auth, adminOnly, imageUpload.single("file"), async
       }
     }
 
+    if (importedCount > 0) {
+      await recordActivity(req, {
+        action: "Imported assets",
+        entityType: "Asset",
+        entityLabel: `${importedCount} assets`,
+        category: [...new Set(assets.map(asset => asset.category).filter(Boolean))].join(", "),
+        details: "Image import",
+      });
+    }
+
     res.json({
       message: "Image scan completed",
       importedCount,
@@ -1520,6 +1633,14 @@ app.put("/api/assets/:id/assign", auth, adminOnly, async (req, res) => {
     });
 
     await asset.save();
+    await recordActivity(req, {
+      action: "Assigned asset",
+      entityType: "Asset",
+      entityId: asset._id.toString(),
+      entityLabel: asset.assetTag,
+      category: asset.category,
+      details: `Assigned to ${asset.assignedTo || "staff"}`,
+    });
     res.json({ message: "Asset assigned", asset });
 
   } catch (err) {
@@ -1563,6 +1684,14 @@ app.post("/api/assets/bulk-assign", auth, adminOnly, async (req, res) => {
       });
 
       await asset.save();
+      await recordActivity(req, {
+        action: "Assigned asset",
+        entityType: "Asset",
+        entityId: asset._id.toString(),
+        entityLabel: asset.assetTag,
+        category: asset.category,
+        details: `Assigned to ${asset.assignedTo || "staff"}`,
+      });
       updatedAssets.push(asset);
     }
 
@@ -1597,6 +1726,14 @@ app.put("/api/assets/:id/return", auth, adminOnly, async (req, res) => {
     });
 
     await asset.save();
+    await recordActivity(req, {
+      action: "Returned asset",
+      entityType: "Asset",
+      entityId: asset._id.toString(),
+      entityLabel: asset.assetTag,
+      category: asset.category,
+      details: `Returned by ${req.body.returnedBy || "staff"}`,
+    });
     res.json({ message: "Asset returned", asset });
 
   } catch (err) {
@@ -1655,6 +1792,15 @@ app.post("/api/returned-assets", auth, adminOnly, async (req, res) => {
       status: payload.status || "Received",
     });
 
+    await recordActivity(req, {
+      action: "Added returned asset",
+      entityType: "Asset",
+      entityId: asset._id.toString(),
+      entityLabel: asset.assetTag,
+      category: asset.category,
+      details: `Returned by ${payload.returnedBy}`,
+    });
+
     res.status(201).json({ message: "Returned asset recorded and added to assets", asset, entry });
   } catch (err) {
     if (createdAssetId) await Asset.deleteOne({ _id: createdAssetId }).catch(() => {});
@@ -1690,6 +1836,15 @@ app.post("/api/it-issues", auth, adminOnly, async (req, res) => {
       returnDueDate: payload.returnDueDate ? new Date(payload.returnDueDate) : null,
       notes: payload.notes || "",
       status: payload.status || "Issued",
+    });
+
+    await recordActivity(req, {
+      action: "Issued equipment",
+      entityType: "Issued Equipment",
+      entityId: issue._id.toString(),
+      entityLabel: issue.itemName,
+      category: issue.category,
+      details: `Issued to ${issue.assignedTo}`,
     });
 
     res.status(201).json({ message: "IT item issued", issue });
@@ -2204,6 +2359,14 @@ app.get("/api/purchase-items/:id", auth, async (req, res) => {
 app.post("/api/purchase-items", auth, canAddAssets, async (req, res) => {
   try {
     const item = await PurchaseItem.create(req.body);
+    await recordActivity(req, {
+      action: "Added purchase item",
+      entityType: "Purchase Item",
+      entityId: item._id.toString(),
+      entityLabel: [item.brand, item.model].filter(Boolean).join(" ") || item.serialNumber || "Purchase item",
+      category: item.category,
+      details: `Purchased for ${item.purchasedFor || "unspecified"}`,
+    });
     res.status(201).json({ message: "Purchase item created", item });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -2214,6 +2377,13 @@ app.put("/api/purchase-items/:id", auth, adminOnly, async (req, res) => {
   try {
     const item = await PurchaseItem.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
     if (!item) return res.status(404).json({ message: "Purchase item not found" });
+    await recordActivity(req, {
+      action: "Updated purchase item",
+      entityType: "Purchase Item",
+      entityId: item._id.toString(),
+      entityLabel: [item.brand, item.model].filter(Boolean).join(" ") || item.serialNumber || "Purchase item",
+      category: item.category,
+    });
     res.json({ message: "Purchase item updated", item });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -2224,6 +2394,13 @@ app.delete("/api/purchase-items/:id", auth, adminOnly, async (req, res) => {
   try {
     const item = await PurchaseItem.findByIdAndDelete(req.params.id);
     if (!item) return res.status(404).json({ message: "Purchase item not found" });
+    await recordActivity(req, {
+      action: "Deleted purchase item",
+      entityType: "Purchase Item",
+      entityId: item._id.toString(),
+      entityLabel: [item.brand, item.model].filter(Boolean).join(" ") || item.serialNumber || "Purchase item",
+      category: item.category,
+    });
     res.json({ message: "Purchase item deleted", item });
   } catch (err) {
     res.status(500).json({ message: err.message });
