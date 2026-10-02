@@ -225,7 +225,7 @@ const userSchema = new mongoose.Schema({
   email: { type: String, unique: true, lowercase: true, trim: true, required: true },
   password: { type: String, required: true },
   mustChangePassword: { type: Boolean, default: false },
-  role: { type: String, enum: ["user", "viewer", "admin", "superadmin"], default: "user" },
+  role: { type: String, enum: ["user", "viewer", "admin", "superadmin"], default: "viewer" },
 }, { timestamps: true });
 
 userSchema.index({ email: 1 }, { unique: true });
@@ -272,6 +272,13 @@ const adminOnly = (req, res, next) => {
   next();
 };
 
+const canAddAssets = (req, res, next) => {
+  if (!req.user || !["user", "admin", "superadmin"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Viewer access is read-only" });
+  }
+  next();
+};
+
 const superAdminOnly = (req, res, next) => {
   if (!req.user || req.user.role !== "superadmin") {
     return res.status(403).json({ message: "Super admin access required" });
@@ -308,7 +315,7 @@ app.post("/api/auth/register", async (req, res) => {
       name, 
       email: email.toLowerCase(), 
       password: hashedPassword,
-      role: "user" 
+      role: "viewer"
     });
     
     await user.save();
@@ -457,7 +464,7 @@ app.post("/api/users", auth, adminOnly, async (req, res) => {
     }
 
     const allowedRoles = ["user", "viewer", "admin", "superadmin"];
-    const selectedRole = allowedRoles.includes(role) ? role : "user";
+    const selectedRole = allowedRoles.includes(role) ? role : "viewer";
 
     if (selectedRole === "superadmin" && req.user.role !== "superadmin") {
       return res.status(403).json({ message: "Only the super admin can create another super admin" });
@@ -737,7 +744,8 @@ app.post("/api/auth/change-password", auth, async (req, res) => {
 const ASSET_CATEGORIES = [
   "Laptops", "Mobile Phones", "Monitors", "Projectors", "TV",
   "Printers", "Copiers", "Network Devices", "Tablets",
-  "Laptop Charger", "Toner", "Docking Station", "Keyboard Combo/Mouse"
+  "Laptop Charger", "Toner", "Docking Station", "Keyboard Combo/Mouse",
+  "Accessories", "Other"
 ];
 
 const isNoAssetTag = value => /(?:^|[^A-Z0-9])NO TAG$/.test(String(value || "").trim().toUpperCase());
@@ -982,8 +990,8 @@ async function migratePurchaseItemFields() {
    ASSET ROUTES
 ========================= */
 
-// CREATE (Admin only)
-app.post("/api/assets", auth, adminOnly, async (req, res) => {
+// CREATE (User and admin)
+app.post("/api/assets", auth, canAddAssets, async (req, res) => {
   try {
     const assetData = { ...req.body };
     assetData.assetTag = (assetData.assetTag || "").trim().toUpperCase();
@@ -1481,7 +1489,7 @@ app.post("/api/import/image", auth, adminOnly, imageUpload.single("file"), async
 /* =========================
    ASSIGN ASSET
 ========================= */
-app.put("/api/assets/:id/assign", auth, async (req, res) => {
+app.put("/api/assets/:id/assign", auth, adminOnly, async (req, res) => {
   try {
     const asset = await Asset.findById(req.params.id);
     if (!asset) return res.status(404).json({ message: "Asset not found" });
@@ -1567,7 +1575,7 @@ app.post("/api/assets/bulk-assign", auth, adminOnly, async (req, res) => {
 /* =========================
    RETURN ASSET
 ========================= */
-app.put("/api/assets/:id/return", auth, async (req, res) => {
+app.put("/api/assets/:id/return", auth, adminOnly, async (req, res) => {
   try {
     const asset = await Asset.findById(req.params.id);
     if (!asset) return res.status(404).json({ message: "Asset not found" });
@@ -1598,8 +1606,39 @@ app.put("/api/assets/:id/return", auth, async (req, res) => {
 
 // UNREGISTERED RETURNED ASSET RECORD
 app.post("/api/returned-assets", auth, adminOnly, async (req, res) => {
+  let createdAssetId;
   try {
     const payload = req.body || {};
+    if (!payload.assetTag || !payload.description || !payload.returnedBy) {
+      return res.status(400).json({ message: "Asset tag, description, and returned by are required" });
+    }
+
+    const returnDate = payload.returnDate ? new Date(payload.returnDate) : new Date();
+    const asset = await Asset.create({
+      assetTag: payload.assetTag,
+      category: payload.category || "Other",
+      brand: payload.brand || "",
+      model: payload.model || "",
+      serialNumber: payload.serialNumber || "",
+      status: "Available",
+      department: payload.department || "",
+      location: payload.location || "",
+      condition: payload.condition || "Good",
+      returnInfo: {
+        returnedBy: payload.returnedBy,
+        returnDate,
+        condition: payload.condition || "Good",
+      },
+      history: [{
+        action: "Returned to inventory",
+        assignedTo: payload.returnedBy,
+        department: payload.department || "",
+        date: returnDate,
+        notes: payload.notes || "Returned item added to the asset register",
+      }],
+    });
+    createdAssetId = asset._id;
+
     const entry = await ReturnedAsset.create({
       description: payload.description || payload.itemName || "Returned item",
       category: payload.category || "Other",
@@ -1612,13 +1651,15 @@ app.post("/api/returned-assets", auth, adminOnly, async (req, res) => {
       location: payload.location || "",
       condition: payload.condition || "Good",
       notes: payload.notes || "",
-      returnDate: payload.returnDate ? new Date(payload.returnDate) : new Date(),
+      returnDate,
       status: payload.status || "Received",
     });
 
-    res.status(201).json({ message: "Returned asset recorded", entry });
+    res.status(201).json({ message: "Returned asset recorded and added to assets", asset, entry });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    if (createdAssetId) await Asset.deleteOne({ _id: createdAssetId }).catch(() => {});
+    const status = err.name === "ValidationError" ? 400 : err.code === 11000 ? 409 : 500;
+    res.status(status).json({ message: err.message });
   }
 });
 
@@ -2160,7 +2201,7 @@ app.get("/api/purchase-items/:id", auth, async (req, res) => {
   }
 });
 
-app.post("/api/purchase-items", auth, adminOnly, async (req, res) => {
+app.post("/api/purchase-items", auth, canAddAssets, async (req, res) => {
   try {
     const item = await PurchaseItem.create(req.body);
     res.status(201).json({ message: "Purchase item created", item });
