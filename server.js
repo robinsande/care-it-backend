@@ -1706,23 +1706,29 @@ app.post("/api/assets/bulk-assign", auth, adminOnly, async (req, res) => {
 ========================= */
 app.put("/api/assets/:id/return", auth, adminOnly, async (req, res) => {
   try {
+    const returnedBy = typeof req.body?.returnedBy === "string" ? req.body.returnedBy.trim() : "";
+    if (!returnedBy) {
+      return res.status(400).json({ message: "Returned by is required" });
+    }
+
     const asset = await Asset.findById(req.params.id);
     if (!asset) return res.status(404).json({ message: "Asset not found" });
 
+    const returnDate = new Date();
     asset.status = "Available";
     asset.assignedTo = null;
 
     asset.returnInfo = {
-      returnedBy: req.body.returnedBy,
-      returnDate: new Date(),
+      returnedBy,
+      returnDate,
       condition: req.body.condition || asset.condition,
     };
 
     asset.history.push({
       action: "Returned",
-      assignedTo: req.body.returnedBy,
-      notes: req.body.notes || `Asset returned by ${req.body.returnedBy || "unknown"}`,
-      date: new Date(),
+      assignedTo: returnedBy,
+      notes: req.body.notes || `Asset returned by ${returnedBy}`,
+      date: returnDate,
     });
 
     await asset.save();
