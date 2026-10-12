@@ -1713,34 +1713,47 @@ app.put("/api/assets/:id/return", auth, adminOnly, async (req, res) => {
 
     const asset = await Asset.findById(req.params.id);
     if (!asset) return res.status(404).json({ message: "Asset not found" });
+    if (asset.status !== "Assigned") {
+      return res.status(409).json({ message: "Asset is no longer assigned" });
+    }
 
     const returnDate = new Date();
-    asset.status = "Available";
-    asset.assignedTo = null;
+    const returnedAsset = await Asset.findOneAndUpdate(
+      { _id: asset._id, status: "Assigned", assignedTo: asset.assignedTo },
+      {
+        $set: {
+          status: "Available",
+          assignedTo: null,
+          returnInfo: {
+            returnedBy,
+            returnDate,
+            condition: req.body.condition || asset.condition,
+          },
+        },
+        $push: {
+          history: {
+            action: "Returned",
+            assignedTo: returnedBy,
+            notes: req.body.notes || `Asset returned by ${returnedBy}`,
+            date: returnDate,
+          },
+        },
+      },
+      { new: true, runValidators: true }
+    );
+    if (!returnedAsset) {
+      return res.status(409).json({ message: "Asset is no longer assigned" });
+    }
 
-    asset.returnInfo = {
-      returnedBy,
-      returnDate,
-      condition: req.body.condition || asset.condition,
-    };
-
-    asset.history.push({
-      action: "Returned",
-      assignedTo: returnedBy,
-      notes: req.body.notes || `Asset returned by ${returnedBy}`,
-      date: returnDate,
-    });
-
-    await asset.save();
     await recordActivity(req, {
       action: "Returned asset",
       entityType: "Asset",
-      entityId: asset._id.toString(),
-      entityLabel: asset.assetTag,
-      category: asset.category,
-      details: `Returned by ${req.body.returnedBy || "staff"}`,
+      entityId: returnedAsset._id.toString(),
+      entityLabel: returnedAsset.assetTag,
+      category: returnedAsset.category,
+      details: `Returned by ${returnedBy}`,
     });
-    res.json({ message: "Asset returned", asset });
+    res.json({ message: "Asset returned", asset: returnedAsset });
 
   } catch (err) {
     res.status(500).json({ message: err.message });
