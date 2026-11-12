@@ -1062,7 +1062,46 @@ const consumableStockMovementSchema = new mongoose.Schema({
 consumableStockMovementSchema.index({ item: 1, year: 1, month: 1 }, { unique: true });
 const ConsumableStockMovement = mongoose.model("ConsumableStockMovement", consumableStockMovementSchema);
 
+const consumableNameCorrections = [
+  {
+    category: "Kitchen Utilities",
+    oldName: "Supa Brite (Sufuria Scrubber) - 2pac",
+    newName: "Supa Brite ((Sufuria Scrubber) - 2pac",
+  },
+  {
+    category: "Kitchen Utilities",
+    oldName: "Supa Brite (Sufuria Scrubber) - 1pac",
+    newName: "Supa Brite ((Sufuria Scrubber) - 1pac",
+  },
+];
+
+async function migrateConsumableItemNames() {
+  for (const correction of consumableNameCorrections) {
+    const legacyItem = await ConsumableStockItem.findOne({
+      itemName: correction.oldName,
+      category: correction.category,
+    }).select("_id").lean();
+    if (!legacyItem) continue;
+
+    const correctedItem = await ConsumableStockItem.exists({
+      itemName: correction.newName,
+      category: correction.category,
+    });
+    if (correctedItem) {
+      console.warn(`Skipping consumable rename because both names exist: ${correction.oldName}`);
+      continue;
+    }
+
+    await ConsumableStockItem.updateOne(
+      { _id: legacyItem._id },
+      { $set: { itemName: correction.newName } },
+      { runValidators: true },
+    );
+  }
+}
+
 async function seedDefaultConsumables() {
+  await migrateConsumableItemNames();
   const operations = defaultConsumables.map(item => ({
     updateOne: {
       filter: { itemName: item.itemName, category: item.category },

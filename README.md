@@ -21,3 +21,4 @@ the catalogue and monthly movements. Admins can add or update catalogue items wi
 `POST /api/consumables` and `PUT /api/consumables/:id`. Users and admins record
 monthly receipts or issues with `POST /api/consumables/:id/stock`. The default
 catalogue is inserted when the database connects without replacing existing items.
+The corrected Supa Brite names are migrated in place so their stock movements remain linked.
