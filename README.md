@@ -13,3 +13,11 @@ Configure these environment variables in Render for Brevo email delivery:
 - `BREVO_SENDER_NAME`: optional sender name, such as `CARE IT Asset Management`.
 
 The password-reset OTP uses Brevo's `POST /v3/smtp/email` API. Do not commit the API key or any email password to the repository.
+
+## Consumables stock API
+
+The authenticated Utilities workspace uses `GET /api/consumables?year=YYYY` to read
+the catalogue and monthly movements. Admins can add or update catalogue items with
+`POST /api/consumables` and `PUT /api/consumables/:id`. Users and admins record
+monthly receipts or issues with `POST /api/consumables/:id/stock`. The default
+catalogue is inserted when the database connects without replacing existing items.

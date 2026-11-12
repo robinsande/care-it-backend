@@ -12,6 +12,7 @@ const multer = require("multer");
 const nodemailer = require("nodemailer");
 const https = require("https");
 const { createWorker } = require("tesseract.js");
+const defaultConsumables = require("./consumables-catalog");
 require("dotenv").config();
 
 const app = express();
@@ -205,6 +206,7 @@ async function connectDatabase() {
       await mongoose.connect(mongoUrl, mongoOptions);
       await migrateAssetTagIndex();
       await migratePurchaseItemFields();
+      await seedDefaultConsumables();
       console.log("✅ MongoDB Connected");
     } catch (err) {
       if (mongoose.connection.readyState === 1) await mongoose.disconnect();
@@ -1036,6 +1038,41 @@ const purchaseItemSchema = new mongoose.Schema({
 purchaseItemSchema.index({ createdAt: -1 });
 purchaseItemSchema.index({ category: 1, purchaseDate: -1 });
 const PurchaseItem = mongoose.model("PurchaseItem", purchaseItemSchema);
+
+const consumableStockItemSchema = new mongoose.Schema({
+  itemName: { type: String, required: true, trim: true },
+  itemCode: { type: String, trim: true, default: "" },
+  unit: { type: String, trim: true, default: "" },
+  category: { type: String, required: true, trim: true },
+  openingBalance: { type: Number, required: true, min: 0, default: 0 },
+  condition: { type: String, trim: true, default: "" },
+}, { timestamps: true });
+
+consumableStockItemSchema.index({ itemName: 1, category: 1 }, { unique: true });
+const ConsumableStockItem = mongoose.model("ConsumableStockItem", consumableStockItemSchema);
+
+const consumableStockMovementSchema = new mongoose.Schema({
+  item: { type: mongoose.Schema.Types.ObjectId, ref: "ConsumableStockItem", required: true },
+  year: { type: Number, required: true, min: 2000, max: 2100 },
+  month: { type: Number, required: true, min: 1, max: 12 },
+  received: { type: Number, required: true, min: 0, default: 0 },
+  issued: { type: Number, required: true, min: 0, default: 0 },
+}, { timestamps: true });
+
+consumableStockMovementSchema.index({ item: 1, year: 1, month: 1 }, { unique: true });
+const ConsumableStockMovement = mongoose.model("ConsumableStockMovement", consumableStockMovementSchema);
+
+async function seedDefaultConsumables() {
+  const operations = defaultConsumables.map(item => ({
+    updateOne: {
+      filter: { itemName: item.itemName, category: item.category },
+      update: { $setOnInsert: item },
+      upsert: true,
+    },
+  }));
+  await ConsumableStockItem.bulkWrite(operations, { ordered: false });
+  console.log(`✅ Consumable catalogue ready (${defaultConsumables.length} items)`);
+}
 
 async function migratePurchaseItemFields() {
   await PurchaseItem.createCollection().catch(error => {
@@ -2349,6 +2386,144 @@ function getPurchaseExportRow(item) {
     receivedBy: item.receivedBy || "",
   };
 }
+
+app.get("/api/consumables", auth, async (req, res) => {
+  try {
+    const year = Number(req.query.year || new Date().getFullYear());
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      return res.status(400).json({ message: "Year must be between 2000 and 2100" });
+    }
+
+    const [items, stockMovements] = await Promise.all([
+      ConsumableStockItem.find().sort({ category: 1, itemName: 1 }).lean(),
+      ConsumableStockMovement.find({ year: { $lte: year } }).lean(),
+    ]);
+    const movementsByItem = new Map();
+    stockMovements.forEach(movement => {
+      const itemId = String(movement.item);
+      if (!movementsByItem.has(itemId)) movementsByItem.set(itemId, {});
+      const period = `${movement.year}-${String(movement.month).padStart(2, "0")}`;
+      movementsByItem.get(itemId)[period] = {
+        received: movement.received,
+        issued: movement.issued,
+      };
+    });
+
+    res.json(items.map(item => ({
+      ...item,
+      movements: movementsByItem.get(String(item._id)) || {},
+    })));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.post("/api/consumables", auth, adminOnly, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const item = await ConsumableStockItem.create({
+      itemName: payload.itemName,
+      itemCode: payload.itemCode || "",
+      unit: payload.unit || "",
+      category: payload.category,
+      openingBalance: payload.openingBalance,
+      condition: payload.condition || "",
+    });
+    res.status(201).json({ message: "Consumable item created", item });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+app.put("/api/consumables/:id", auth, adminOnly, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const item = await ConsumableStockItem.findByIdAndUpdate(req.params.id, {
+      itemName: payload.itemName,
+      itemCode: payload.itemCode || "",
+      unit: payload.unit || "",
+      category: payload.category,
+      openingBalance: payload.openingBalance,
+      condition: payload.condition || "",
+    }, { new: true, runValidators: true });
+    if (!item) return res.status(404).json({ message: "Consumable item not found" });
+    res.json({ message: "Consumable item updated", item });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+app.post("/api/consumables/:id/stock", auth, canAddAssets, async (req, res) => {
+  try {
+    const item = await ConsumableStockItem.findById(req.params.id);
+    if (!item) return res.status(404).json({ message: "Consumable item not found" });
+
+    const year = Number(req.body && req.body.year);
+    const month = Number(req.body && req.body.month);
+    const received = Number(req.body && req.body.received || 0);
+    const issued = Number(req.body && req.body.issued || 0);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100 ||
+        !Number.isInteger(month) || month < 1 || month > 12 ||
+        !Number.isFinite(received) || received < 0 ||
+        !Number.isFinite(issued) || issued < 0 ||
+        (received === 0 && issued === 0)) {
+      return res.status(400).json({ message: "Enter a valid month and a positive received or issued quantity" });
+    }
+
+    const totals = await ConsumableStockMovement.aggregate([
+      {
+        $match: {
+          item: item._id,
+          $or: [
+            { year: { $lt: year } },
+            { year, month: { $lte: month } },
+          ],
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          received: { $sum: "$received" },
+          issued: { $sum: "$issued" },
+        },
+      },
+    ]);
+    const currentBalance = item.openingBalance +
+      (totals[0] ? totals[0].received - totals[0].issued : 0);
+    if (currentBalance + received - issued < 0) {
+      return res.status(400).json({ message: "Issued quantity cannot exceed the available stock" });
+    }
+
+    const filter = { item: item._id, year, month };
+    const update = { $inc: { received, issued } };
+    let movement;
+    try {
+      movement = await ConsumableStockMovement.findOneAndUpdate(filter, update, {
+        new: true,
+        upsert: true,
+        runValidators: true,
+      });
+    } catch (err) {
+      if (err.code !== 11000) throw err;
+      movement = await ConsumableStockMovement.findOneAndUpdate(filter, update, {
+        new: true,
+        runValidators: true,
+      });
+      if (!movement) throw err;
+    }
+    await recordActivity(req, {
+      action: "Recorded consumable stock",
+      entityType: "Consumable",
+      entityId: item._id.toString(),
+      entityLabel: item.itemName,
+      category: item.category,
+      details: `Received ${received}; issued ${issued}; month ${month}/${year}`,
+    });
+    res.json({ message: "Stock movement recorded", movement });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
 app.get("/api/purchase-items", auth, async (req, res) => {
   try {
